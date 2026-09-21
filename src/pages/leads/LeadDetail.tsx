@@ -3,9 +3,10 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useApp } from '../../context/AppContext'
 import { useToast } from '../../components/ToastContext'
 import { Card, Button, Field, inputClass, StatusBadge, Badge } from '../../components/ui'
+import ReklamationModal from '../../components/ReklamationModal'
 import { formatDateTime, formatEuro, formatDate, uid, isoDaysAgo } from '../../lib/utils'
-import { LEAD_STATUS_PIPELINE, type LeadStatus } from '../../types'
-import { ArrowLeft, Phone, Mail, Check, X as XIcon, Clock, MessageSquare, PhoneCall, CalendarPlus } from 'lucide-react'
+import { LEAD_STATUS_PIPELINE, REKLAMATION_STATUS_LABEL, type LeadStatus, type ReklamationStatus } from '../../types'
+import { ArrowLeft, Phone, Mail, Check, X as XIcon, Clock, MessageSquare, PhoneCall, CalendarPlus, Flag } from 'lucide-react'
 
 const TYP_ICON: Record<string, ReactNode> = {
   anruf: <PhoneCall size={14} />,
@@ -26,6 +27,7 @@ export default function LeadDetail() {
   const [notiz, setNotiz] = useState(lead?.notizen ?? '')
   const [wvDatum, setWvDatum] = useState(lead?.wiedervorlage ? lead.wiedervorlage.datum.slice(0, 16) : '')
   const [wvNotiz, setWvNotiz] = useState(lead?.wiedervorlage?.notiz ?? '')
+  const [reklamationOpen, setReklamationOpen] = useState(false)
 
   if (!lead) {
     return (
@@ -89,7 +91,7 @@ export default function LeadDetail() {
             <StatusBadge status={lead.status} />
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button variant="secondary" onClick={simulateCall}>
             <Phone size={16} /> Anrufen
           </Button>
@@ -98,8 +100,15 @@ export default function LeadDetail() {
               <XIcon size={16} /> Als verloren markieren
             </Button>
           )}
+          {lead.liste !== 'reklamiert' && (
+            <Button variant="secondary" onClick={() => setReklamationOpen(true)}>
+              <Flag size={16} /> Lead reklamieren
+            </Button>
+          )}
         </div>
       </div>
+
+      <ReklamationModal open={reklamationOpen} onClose={() => setReklamationOpen(false)} leadId={lead.id} leadName={lead.name} />
 
       <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-3">
         <div className="space-y-5 lg:col-span-2">
@@ -203,6 +212,32 @@ export default function LeadDetail() {
             <Card className="p-5">
               <h2 className="mb-2 font-semibold text-ink-800">Verlustgrund</h2>
               <p className="text-sm text-ink-500">{lead.verlorenGrund}</p>
+            </Card>
+          )}
+
+          {lead.reklamation && (
+            <Card className="p-5 ring-1 ring-red-200">
+              <h2 className="mb-2 flex items-center gap-2 font-semibold text-ink-800">
+                <Flag size={16} className="text-red-500" /> Reklamation an Lead-Lieferant
+              </h2>
+              <p className="text-sm text-ink-600">{lead.reklamation.grund}</p>
+              {lead.reklamation.notiz && <p className="mt-1 text-sm text-ink-500">{lead.reklamation.notiz}</p>}
+              <p className="mt-2 text-xs text-ink-400">Reklamiert am {formatDate(lead.reklamation.datum)}</p>
+              <div className="mt-3">
+                <Field label="Rückmeldestatus Lieferant">
+                  <select
+                    className={inputClass}
+                    value={lead.reklamation.status}
+                    onChange={(e) => dispatch({ type: 'SET_REKLAMATION_STATUS', id: lead.id, status: e.target.value as ReklamationStatus })}
+                  >
+                    {(Object.keys(REKLAMATION_STATUS_LABEL) as ReklamationStatus[]).map((s) => (
+                      <option key={s} value={s}>
+                        {REKLAMATION_STATUS_LABEL[s]}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
             </Card>
           )}
 

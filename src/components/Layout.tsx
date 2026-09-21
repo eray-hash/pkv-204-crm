@@ -14,10 +14,12 @@ import {
   ChevronDown,
   Megaphone,
   RotateCcw,
+  BarChart3,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { NEWS_TICKER } from '../data/seed'
 import { formatDateTime } from '../lib/utils'
+import type { Rolle } from '../types'
 import { useToast } from './ToastContext'
 
 const leadSubLinks = [
@@ -25,6 +27,7 @@ const leadSubLinks = [
   { to: '/leads/kunden', label: 'Kundenbereich' },
   { to: '/leads/verloren', label: 'Verlorene Leads' },
   { to: '/leads/alt', label: 'Alte Leads' },
+  { to: '/leads/reklamiert', label: 'Reklamierte Leads' },
   { to: '/leads/power-dialer', label: 'Power Dialer' },
 ]
 
@@ -113,6 +116,7 @@ export default function Layout() {
           <NavItem to="/kalender" icon={<CalendarDays size={18} />} label="Kalender" />
           <NavItem to="/nachrichten" icon={<Mail size={18} />} label="Nachrichten" />
           <NavItem to="/buchhaltung" icon={<Wallet size={18} />} label="Buchhaltung" />
+          {state.rolle === 'geschaeftsfuehrer' && <NavItem to="/team" icon={<BarChart3 size={18} />} label="Team" />}
           <NavItem to="/hilfe" icon={<LifeBuoy size={18} />} label="Hilfe / Onboarding" />
           <NavItem to="/profil" icon={<UserCircle size={18} />} label="Mein Profil" />
         </nav>
@@ -140,6 +144,7 @@ export default function Layout() {
           </div>
 
           <div className="flex shrink-0 items-center gap-1.5">
+            <RoleSwitch />
             <LanguageSwitch />
 
             <button
@@ -248,6 +253,21 @@ function NavItem({ to, icon, label, end }: { to: string; icon: ReactNode; label:
       {icon}
       {label}
     </NavLink>
+  )
+}
+
+function RoleSwitch() {
+  const { state, dispatch } = useApp()
+  return (
+    <select
+      value={state.rolle}
+      onChange={(e) => dispatch({ type: 'SET_ROLLE', rolle: e.target.value as Rolle })}
+      title="Ansicht wechseln (Mockup-Rollensystem, da noch kein echtes Login besteht)"
+      className="rounded-lg border border-ink-200 bg-white px-2 py-1.5 text-xs font-semibold text-ink-600 hover:bg-ink-50 focus:outline-none focus:ring-2 focus:ring-brand-100"
+    >
+      <option value="mitarbeiter">Ansicht: Mitarbeiter</option>
+      <option value="geschaeftsfuehrer">Ansicht: Geschäftsführer</option>
+    </select>
   )
 }
 

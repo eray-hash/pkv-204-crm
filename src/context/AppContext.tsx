@@ -15,6 +15,9 @@ import type {
   Wiedervorlage,
   LeadStatus,
   Blockzeit,
+  Rolle,
+  TeamPerformance,
+  ReklamationStatus,
 } from '../types'
 import {
   buildLeads,
@@ -26,6 +29,7 @@ import {
   buildTeamProvision,
   buildBenachrichtigungen,
   buildTeammitglieder,
+  buildTeamPerformance,
   buildOnboardingVideos,
   buildProfil,
 } from '../data/seed'
@@ -41,15 +45,18 @@ export interface AppData {
   teamProvision: TeamProvisionZeile[]
   benachrichtigungen: Benachrichtigung[]
   teammitglieder: Teammitglied[]
+  teamPerformance: TeamPerformance[]
   onboardingVideos: OnboardingVideo[]
   profil: Profil
   sprache: 'de' | 'en'
+  rolle: Rolle
 }
 
-const STORAGE_KEY = 'pkv-204-crm-data-v1'
+const STORAGE_KEY = 'pkv-204-crm-data-v2'
 
 function buildSeed(): AppData {
   const leads = buildLeads()
+  const teammitglieder = buildTeammitglieder()
   return {
     leads,
     termine: buildTermine(leads),
@@ -59,10 +66,12 @@ function buildSeed(): AppData {
     salesProvision: buildSalesProvision(),
     teamProvision: buildTeamProvision(),
     benachrichtigungen: buildBenachrichtigungen(),
-    teammitglieder: buildTeammitglieder(),
+    teammitglieder,
+    teamPerformance: buildTeamPerformance(teammitglieder),
     onboardingVideos: buildOnboardingVideos(),
     profil: buildProfil(),
     sprache: 'de',
+    rolle: 'mitarbeiter',
   }
 }
 
@@ -72,6 +81,9 @@ function loadInitial(): AppData {
     if (raw) {
       const parsed = JSON.parse(raw) as AppData
       if (parsed && Array.isArray(parsed.leads)) {
+        // Ältere localStorage-Stände kennen Rolle/Team-Tracking noch nicht
+        if (!Array.isArray(parsed.teamPerformance)) parsed.teamPerformance = buildTeamPerformance(parsed.teammitglieder ?? [])
+        if (parsed.rolle !== 'mitarbeiter' && parsed.rolle !== 'geschaeftsfuehrer') parsed.rolle = 'mitarbeiter'
         return parsed
       }
     }
@@ -97,6 +109,9 @@ type Action =
   | { type: 'MARK_NOTIFICATION_READ'; id: string }
   | { type: 'MARK_ALL_NOTIFICATIONS_READ' }
   | { type: 'TOGGLE_TEAM_KALENDER'; id: string }
+  | { type: 'SET_ROLLE'; rolle: Rolle }
+  | { type: 'REKLAMIEREN_LEAD'; id: string; grund: string; notiz: string }
+  | { type: 'SET_REKLAMATION_STATUS'; id: string; status: ReklamationStatus }
   | { type: 'RESET' }
 
 function reducer(state: AppData, action: Action): AppData {
@@ -157,6 +172,30 @@ function reducer(state: AppData, action: Action): AppData {
       return {
         ...state,
         teammitglieder: state.teammitglieder.map((t) => (t.id === action.id ? { ...t, darfKalenderSehen: !t.darfKalenderSehen } : t)),
+      }
+    case 'SET_ROLLE':
+      return { ...state, rolle: action.rolle }
+    case 'REKLAMIEREN_LEAD':
+      return {
+        ...state,
+        leads: state.leads.map((l) =>
+          l.id === action.id
+            ? {
+                ...l,
+                liste: 'reklamiert',
+                reklamation: { datum: isoDaysAgo(0), grund: action.grund, notiz: action.notiz, status: 'offen' },
+                aktivitaeten: [
+                  { id: uid('akt'), datum: isoDaysAgo(0), typ: 'status', text: `Lead reklamiert: ${action.grund}` },
+                  ...l.aktivitaeten,
+                ],
+              }
+            : l,
+        ),
+      }
+    case 'SET_REKLAMATION_STATUS':
+      return {
+        ...state,
+        leads: state.leads.map((l) => (l.id === action.id && l.reklamation ? { ...l, reklamation: { ...l.reklamation, status: action.status } } : l)),
       }
     case 'RESET':
       return buildSeed()

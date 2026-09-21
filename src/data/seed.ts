@@ -12,7 +12,9 @@ import type {
   Profil,
   Aktivitaet,
   LeadStatus,
+  TeamPerformance,
 } from '../types'
+import { REKLAMATION_GRUENDE } from '../types'
 import { uid, isoDaysAgo, isoDaysFromNow } from '../lib/utils'
 
 const VORNAMEN = [
@@ -192,6 +194,28 @@ export function buildLeads(): Lead[] {
     )
   })
 
+  // Reklamierte Leads (Signal an den Lead-Lieferanten)
+  const reklamationStaende: { grund: string; notiz: string; status: 'offen' | 'ersatz' | 'gutschrift'; tageAlt: number }[] = [
+    { grund: REKLAMATION_GRUENDE[0], notiz: 'Kunde meldet sich trotz mehrerer Versuche zu verschiedenen Tageszeiten nicht zurück.', status: 'offen', tageAlt: 2 },
+    { grund: REKLAMATION_GRUENDE[1], notiz: 'Angegebene Rufnummer ist nicht vergeben bzw. wurde falsch übermittelt.', status: 'offen', tageAlt: 5 },
+    { grund: REKLAMATION_GRUENDE[2], notiz: 'Klarer Widerspruch gegen jede Kontaktaufnahme zu §204-Themen erhalten.', status: 'ersatz', tageAlt: 12 },
+    { grund: REKLAMATION_GRUENDE[3], notiz: 'Laut eigener Aussage bereits bei einem anderen Anbieter unter Vertrag.', status: 'gutschrift', tageAlt: 20 },
+  ]
+  reklamationStaende.forEach((r) => {
+    const lead = buildLead({ liste: 'reklamiert', status: 'Neu', erstelltVorTagen: r.tageAlt + 3 })
+    lead.reklamation = {
+      datum: isoDaysAgo(r.tageAlt),
+      grund: r.grund,
+      notiz: r.notiz,
+      status: r.status,
+    }
+    lead.aktivitaeten = [
+      { id: uid('akt'), datum: isoDaysAgo(r.tageAlt), typ: 'status', text: `Lead reklamiert: ${r.grund}` },
+      ...lead.aktivitaeten,
+    ]
+    leads.push(lead)
+  })
+
   return leads
 }
 
@@ -303,6 +327,27 @@ export function buildTeammitglieder(): Teammitglied[] {
     { id: uid('team'), name: 'Sandra Becker', rolle: 'Teamassistenz', darfKalenderSehen: true },
     { id: uid('team'), name: 'Frank Zimmermann', rolle: 'Vertriebspartner', darfKalenderSehen: false },
   ]
+}
+
+export function buildTeamPerformance(teammitglieder: Teammitglied[]): TeamPerformance[] {
+  return teammitglieder.map((t) => {
+    const istAssistenz = t.rolle === 'Teamassistenz'
+    const anrufeGesamt = istAssistenz ? randInt(40, 90) : randInt(150, 250)
+    const nichtErreichtAnrufe = Math.round(anrufeGesamt * (randInt(25, 40) / 100))
+    const guteAnrufe = Math.round((anrufeGesamt - nichtErreichtAnrufe) * (randInt(45, 65) / 100))
+    const terminAnrufe = Math.round(guteAnrufe * (randInt(25, 40) / 100))
+    const abschlussAnrufe = Math.round(terminAnrufe * (randInt(30, 55) / 100))
+    const einnahmen = abschlussAnrufe * randInt(320, 680)
+    return {
+      teammitgliedId: t.id,
+      einnahmen,
+      anrufeGesamt,
+      guteAnrufe,
+      terminAnrufe,
+      abschlussAnrufe,
+      nichtErreichtAnrufe,
+    }
+  })
 }
 
 export function buildOnboardingVideos(): OnboardingVideo[] {

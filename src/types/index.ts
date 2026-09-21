@@ -16,7 +16,30 @@ export const LEAD_STATUS_PIPELINE: LeadStatus[] = [
   'Gewonnen',
 ]
 
-export type LeadListe = 'aktiv' | 'kunde' | 'verloren' | 'alt'
+export type LeadListe = 'aktiv' | 'kunde' | 'verloren' | 'alt' | 'reklamiert'
+
+export type ReklamationStatus = 'offen' | 'ersatz' | 'gutschrift'
+
+export interface Reklamation {
+  datum: string
+  grund: string
+  notiz: string
+  status: ReklamationStatus
+}
+
+export const REKLAMATION_STATUS_LABEL: Record<ReklamationStatus, string> = {
+  offen: 'Offen (an Lieferant gemeldet)',
+  ersatz: 'Erledigt (Ersatz erhalten)',
+  gutschrift: 'Erledigt (Gutschrift erhalten)',
+}
+
+export const REKLAMATION_GRUENDE = [
+  'Nicht erreichbar',
+  'Falsche Nummer',
+  'Kein Interesse an §204',
+  'Bereits Kunde woanders',
+  'Sonstiges',
+] as const
 
 export type AktivitaetTyp = 'anruf' | 'email' | 'notiz' | 'status' | 'termin'
 
@@ -49,6 +72,7 @@ export interface Lead {
   aktivitaeten: Aktivitaet[]
   wiedervorlage?: Wiedervorlage
   verlorenGrund?: string
+  reklamation?: Reklamation
 }
 
 export interface Termin {
@@ -113,6 +137,18 @@ export interface Teammitglied {
   name: string
   rolle: string
   darfKalenderSehen: boolean
+}
+
+export type Rolle = 'mitarbeiter' | 'geschaeftsfuehrer'
+
+export interface TeamPerformance {
+  teammitgliedId: string
+  einnahmen: number
+  anrufeGesamt: number
+  guteAnrufe: number
+  terminAnrufe: number
+  abschlussAnrufe: number
+  nichtErreichtAnrufe: number
 }
 
 export interface Zeitfenster {
