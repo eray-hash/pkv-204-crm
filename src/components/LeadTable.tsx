@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { Lead } from '../types'
 import { formatDate, formatEuro } from '../lib/utils'
-import { StatusBadge } from './ui'
+import { StatusBadge, ScrollHint } from './ui'
 
 export default function LeadTable({
   leads,
@@ -22,8 +22,10 @@ export default function LeadTable({
   }
 
   return (
-    <div className="overflow-x-auto rounded-2xl border border-ink-100 bg-white shadow-sm">
-      <table className="w-full min-w-[820px] text-left text-sm">
+    <div>
+      <ScrollHint />
+      <div className="overflow-x-auto rounded-2xl border border-ink-100 bg-white shadow-sm">
+        <table className="w-full min-w-[820px] text-left text-sm">
         <thead>
           <tr className="border-b border-ink-100 text-xs uppercase tracking-wide text-ink-400">
             <th className="px-4 py-3 font-medium">Name</th>
@@ -65,7 +67,8 @@ export default function LeadTable({
             </tr>
           ))}
         </tbody>
-      </table>
+        </table>
+      </div>
     </div>
   )
 }

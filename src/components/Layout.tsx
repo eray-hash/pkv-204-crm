@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
   Users,
@@ -15,6 +15,8 @@ import {
   Megaphone,
   RotateCcw,
   BarChart3,
+  Menu,
+  X as XIcon,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { NEWS_TICKER } from '../data/seed'
@@ -35,9 +37,11 @@ export default function Layout() {
   const { state, dispatch } = useApp()
   const { showToast } = useToast()
   const navigate = useNavigate()
+  const location = useLocation()
   const [leadsOpen, setLeadsOpen] = useState(true)
   const [notifOpen, setNotifOpen] = useState(false)
   const [tickerIndex, setTickerIndex] = useState(0)
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const notifRef = useRef<HTMLDivElement>(null)
 
   const unreadMessages = state.nachrichten.filter((m) => !m.gelesen).length
@@ -58,6 +62,10 @@ export default function Layout() {
     return () => document.removeEventListener('mousedown', onClick)
   }, [])
 
+  useEffect(() => {
+    setMobileNavOpen(false)
+  }, [location.pathname])
+
   function handleReset() {
     if (confirm('Alle Daten wirklich zurücksetzen? Dieser Vorgang kann nicht rückgängig gemacht werden.')) {
       dispatch({ type: 'RESET' })
@@ -67,17 +75,41 @@ export default function Layout() {
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-ink-50">
+      {/* Backdrop (mobile drawer) */}
+      {mobileNavOpen && (
+        <div className="fixed inset-0 z-30 bg-ink-900/40 lg:hidden" onClick={() => setMobileNavOpen(false)} aria-hidden="true" />
+      )}
+
       {/* Sidebar */}
-      <aside className="flex w-64 shrink-0 flex-col border-r border-ink-100 bg-white">
+      <aside
+        className={`fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85vw] shrink-0 flex-col border-r border-ink-100 bg-white transition-transform duration-200 ease-out lg:static lg:z-auto lg:w-64 lg:max-w-none lg:translate-x-0 ${
+          mobileNavOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
         <div className="flex items-center gap-2 border-b border-ink-100 px-5 py-4">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-600 text-sm font-bold text-white">§204</div>
-          <div>
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-600 text-sm font-bold text-white">§204</div>
+          <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold text-ink-900 leading-tight">PKV Tarifoptimierung</p>
             <p className="text-xs text-ink-400 leading-tight">Lead-Management CRM</p>
           </div>
+          <button
+            onClick={() => setMobileNavOpen(false)}
+            className="rounded-lg p-1.5 text-ink-400 hover:bg-ink-100 hover:text-ink-700 lg:hidden"
+            aria-label="Menü schließen"
+          >
+            <XIcon size={18} />
+          </button>
         </div>
 
-        <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-4 text-sm">
+        <div className="border-b border-ink-100 p-3 lg:hidden">
+          <p className="mb-2 px-1 text-xs font-medium uppercase tracking-wide text-ink-400">Einstellungen</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <RoleSwitch />
+            <LanguageSwitch />
+          </div>
+        </div>
+
+        <nav onClick={(e) => (e.target as HTMLElement).closest('a') && setMobileNavOpen(false)} className="flex-1 space-y-0.5 overflow-y-auto px-3 py-4 text-sm">
           <NavItem to="/" icon={<LayoutDashboard size={18} />} label="Dashboard" end />
 
           <div>
@@ -135,7 +167,15 @@ export default function Layout() {
       {/* Main column */}
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Topbar */}
-        <header className="flex h-16 shrink-0 items-center gap-4 border-b border-ink-100 bg-white px-6">
+        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-ink-100 bg-white px-3 lg:h-16 lg:gap-4 lg:px-6">
+          <button
+            onClick={() => setMobileNavOpen(true)}
+            className="shrink-0 rounded-lg p-2 text-ink-500 hover:bg-ink-100 lg:hidden"
+            aria-label="Menü öffnen"
+          >
+            <Menu size={20} />
+          </button>
+
           <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-lg bg-ink-50 px-3 py-1.5 text-sm text-ink-500">
             <Megaphone size={16} className="shrink-0 text-brand-500" />
             <span key={tickerIndex} className="truncate">
@@ -143,9 +183,11 @@ export default function Layout() {
             </span>
           </div>
 
-          <div className="flex shrink-0 items-center gap-1.5">
-            <RoleSwitch />
-            <LanguageSwitch />
+          <div className="flex shrink-0 items-center gap-1 lg:gap-1.5">
+            <div className="hidden items-center gap-1.5 lg:flex">
+              <RoleSwitch />
+              <LanguageSwitch />
+            </div>
 
             <button
               onClick={() => navigate('/leads/power-dialer')}
@@ -178,7 +220,7 @@ export default function Layout() {
                 )}
               </button>
               {notifOpen && (
-                <div className="absolute right-0 z-40 mt-2 w-80 rounded-xl border border-ink-100 bg-white p-2 shadow-lg">
+                <div className="absolute right-0 z-40 mt-2 w-[85vw] max-w-xs rounded-xl border border-ink-100 bg-white p-2 shadow-lg">
                   <div className="flex items-center justify-between px-2 py-1">
                     <p className="text-sm font-semibold text-ink-800">Benachrichtigungen</p>
                     <button
@@ -224,7 +266,7 @@ export default function Layout() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto px-6 py-6">
+        <main className="flex-1 overflow-x-hidden overflow-y-auto px-4 py-4 lg:px-6 lg:py-6">
           <Outlet />
         </main>
       </div>

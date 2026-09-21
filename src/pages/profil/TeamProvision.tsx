@@ -1,9 +1,11 @@
 import { useApp } from '../../context/AppContext'
-import { Card } from '../../components/ui'
+import { Card, ScrollHint } from '../../components/ui'
 
 export default function TeamProvision() {
   const { state } = useApp()
   return (
+    <>
+    <ScrollHint />
     <Card className="overflow-x-auto p-0">
       <table className="w-full min-w-[600px] text-left text-sm">
         <thead>
@@ -24,5 +26,6 @@ export default function TeamProvision() {
         </tbody>
       </table>
     </Card>
+    </>
   )
 }

@@ -114,7 +114,7 @@ export default function PowerDialer() {
         </span>
       </div>
 
-      <Card className="mx-auto max-w-xl p-8 text-center">
+      <Card className="mx-auto max-w-xl p-5 text-center sm:p-8">
         <Badge tone="brand">{currentLead.status}</Badge>
         <h2 className="mt-3 text-2xl font-semibold text-ink-900">{currentLead.name}</h2>
         <p className="mt-1 text-ink-500">{currentLead.telefon}</p>

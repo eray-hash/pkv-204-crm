@@ -124,18 +124,18 @@ export default function Kalender() {
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         <div className="lg:col-span-2">
           {view === 'monat' ? (
-            <Card className="p-4">
-              <p className="mb-3 text-sm font-semibold text-ink-700">
+            <Card className="p-2 sm:p-4">
+              <p className="mb-3 px-1 text-sm font-semibold text-ink-700">
                 {now.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' })}
               </p>
-              <div className="grid grid-cols-7 gap-1 text-center text-xs font-medium text-ink-400">
+              <div className="grid grid-cols-7 gap-0.5 text-center text-[10px] font-medium text-ink-400 sm:gap-1 sm:text-xs">
                 {WOCHENTAGE.map((w) => (
                   <div key={w} className="py-1">
                     {w}
                   </div>
                 ))}
               </div>
-              <div className="grid grid-cols-7 gap-1">
+              <div className="grid grid-cols-7 gap-0.5 sm:gap-1">
                 {monthGrid.map((d) => {
                   const dayTermine = state.termine.filter((t) => sameDay(new Date(t.datum), d))
                   const inMonth = d.getMonth() === now.getMonth()
@@ -147,12 +147,12 @@ export default function Kalender() {
                         setSelectedDay(d)
                         setView('tag')
                       }}
-                      className={`min-h-[64px] rounded-lg border p-1.5 text-left text-xs ${
+                      className={`min-h-[44px] rounded-lg border p-1 text-left text-[11px] sm:min-h-[64px] sm:p-1.5 sm:text-xs ${
                         isToday ? 'border-brand-400 bg-brand-50' : 'border-ink-100'
                       } ${inMonth ? '' : 'opacity-40'} hover:border-brand-300`}
                     >
                       <span className={`font-medium ${isToday ? 'text-brand-700' : 'text-ink-600'}`}>{d.getDate()}</span>
-                      <div className="mt-1 space-y-0.5">
+                      <div className="mt-1 hidden space-y-0.5 sm:block">
                         {dayTermine.slice(0, 2).map((t) => (
                           <div key={t.id} className="truncate rounded bg-brand-100 px-1 py-0.5 text-[10px] text-brand-700">
                             {formatTime(t.datum)} {t.leadName}
@@ -160,6 +160,9 @@ export default function Kalender() {
                         ))}
                         {dayTermine.length > 2 && <div className="text-[10px] text-ink-400">+{dayTermine.length - 2} weitere</div>}
                       </div>
+                      {dayTermine.length > 0 && (
+                        <div className="mt-0.5 h-1.5 w-1.5 rounded-full bg-brand-500 sm:hidden" />
+                      )}
                     </button>
                   )
                 })}
@@ -173,14 +176,14 @@ export default function Kalender() {
               <div className="divide-y divide-ink-50">
                 {filteredTermine.length === 0 && <p className="py-6 text-center text-sm text-ink-400">Keine Termine in diesem Zeitraum.</p>}
                 {filteredTermine.map((t) => (
-                  <div key={t.id} className="flex items-center justify-between py-3">
-                    <div>
-                      <p className="font-medium text-ink-800">{t.leadName}</p>
-                      <p className="text-xs text-ink-400">
+                  <div key={t.id} className="flex flex-wrap items-center justify-between gap-2 py-3">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-ink-800">{t.leadName}</p>
+                      <p className="truncate text-xs text-ink-400">
                         {t.typ} · {t.format} · {t.dauerMinuten} Min.
                       </p>
                     </div>
-                    <div className="text-right text-sm text-ink-600">
+                    <div className="shrink-0 text-right text-sm text-ink-600">
                       <p>{formatDate(t.datum)}</p>
                       <p className="text-xs text-ink-400">{formatTime(t.datum)}</p>
                     </div>

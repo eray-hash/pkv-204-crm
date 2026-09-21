@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { X } from 'lucide-react'
+import { X, MoveHorizontal } from 'lucide-react'
 
 export function Card({
   children,
@@ -200,6 +200,14 @@ export function Tabs({
           {tab.label}
         </button>
       ))}
+    </div>
+  )
+}
+
+export function ScrollHint() {
+  return (
+    <div className="mb-1.5 flex items-center gap-1 text-xs text-ink-400 lg:hidden">
+      <MoveHorizontal size={13} /> Tabelle nach links/rechts wischen zum Scrollen
     </div>
   )
 }

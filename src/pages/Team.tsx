@@ -1,5 +1,5 @@
 import { useApp } from '../context/AppContext'
-import { Card, SectionHeader, KpiTile } from '../components/ui'
+import { Card, SectionHeader, KpiTile, ScrollHint } from '../components/ui'
 import { formatEuro } from '../lib/utils'
 import { ShieldAlert } from 'lucide-react'
 
@@ -47,6 +47,7 @@ export default function Team() {
         <KpiTile label="Abschlüsse" value={String(summe.abschlussAnrufe)} accent="green" />
       </div>
 
+      <ScrollHint />
       <div className="overflow-x-auto rounded-2xl border border-ink-100 bg-white shadow-sm">
         <table className="w-full min-w-[920px] text-left text-sm">
           <thead>

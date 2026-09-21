@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '../../context/AppContext'
 import { useToast } from '../../components/ToastContext'
-import { Card, SectionHeader, KpiTile, Badge, Button, inputClass } from '../../components/ui'
+import { Card, SectionHeader, KpiTile, Badge, Button, inputClass, ScrollHint } from '../../components/ui'
 import { formatDate } from '../../lib/utils'
 import { REKLAMATION_STATUS_LABEL, type ReklamationStatus } from '../../types'
 import { ClipboardCopy, Download, AlertOctagon } from 'lucide-react'
@@ -94,6 +94,8 @@ export default function Reklamiert() {
       {reklamiert.length === 0 ? (
         <Card className="p-8 text-center text-sm text-ink-400">Keine reklamierten Leads vorhanden.</Card>
       ) : (
+        <>
+        <ScrollHint />
         <div className="overflow-x-auto rounded-2xl border border-ink-100 bg-white shadow-sm">
           <table className="w-full min-w-[900px] text-left text-sm">
             <thead>
@@ -141,6 +143,7 @@ export default function Reklamiert() {
             </tbody>
           </table>
         </div>
+        </>
       )}
     </div>
   )
