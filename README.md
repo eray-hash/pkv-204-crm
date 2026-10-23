@@ -37,3 +37,14 @@ npm run build
 - Mein Profil mit Unter-Tabs: Profildaten, Kalender-Einstellungen, Sales-Provision, Team-Provision
 
 Über den Button „Daten zurücksetzen“ in der Seitenleiste lässt sich der Mock-Datenbestand jederzeit auf den Ausgangszustand zurücksetzen.
+
+## Anbindung an Supabase (Stand Oktober 2026)
+
+- Echte Leads, Login, Power Dialer, Notizen und Anrufprotokoll laufen gegen die Supabase-Datenbank (siehe `supabase/README.md`).
+  Kalender, Buchhaltung, Nachrichten, Reklamationen, Team-Zahlen, Provisionen und Onboarding zeigen weiterhin Beispieldaten
+  (auf den Seiten mit dem Hinweis „Beispieldaten“ gekennzeichnet).
+- Konfiguration über `.env.development` / `.env.production` (nur öffentliche Werte: URL und publishable Key; der Schutz läuft über
+  Row Level Security). Lokale Überschreibungen gehören in `.env.development.local` (git-ignoriert; Vite gibt modusspezifischen
+  Dateien Vorrang vor `.env.local`). Niemals einen secret/service_role-Key im Frontend verwenden.
+- Es gibt keine Registrierung im Frontend; Nutzer werden im Supabase-Dashboard eingeladen.
+- Tests der Mapping-Logik: `npm test`.

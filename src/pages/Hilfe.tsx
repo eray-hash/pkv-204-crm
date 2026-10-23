@@ -1,7 +1,7 @@
 import { useRef, useState, type ChangeEvent } from 'react'
 import { useApp } from '../context/AppContext'
 import { useToast } from '../components/ToastContext'
-import { Card, SectionHeader, Button, Badge } from '../components/ui'
+import { Card, SectionHeader, Button, Badge, ExampleNotice } from '../components/ui'
 import { PlayCircle, UploadCloud } from 'lucide-react'
 
 export default function Hilfe() {
@@ -31,6 +31,7 @@ export default function Hilfe() {
           </Button>
         }
       />
+      <ExampleNotice />
       <input ref={fileInputRef} type="file" accept="video/*" multiple className="hidden" onChange={handleFileChange} />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">

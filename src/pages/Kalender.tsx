@@ -1,7 +1,7 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import { useApp } from '../context/AppContext'
 import { useToast } from '../components/ToastContext'
-import { Card, SectionHeader, Button, Tabs, Modal, Field, inputClass, Badge } from '../components/ui'
+import { Card, SectionHeader, Button, Tabs, Modal, Field, inputClass, Badge, ExampleNotice } from '../components/ui'
 import { formatTime, formatDate, uid } from '../lib/utils'
 import type { Termin } from '../types'
 import { Plus, Users, Link2, CheckCircle2 } from 'lucide-react'
@@ -107,6 +107,8 @@ export default function Kalender() {
           </>
         }
       />
+
+      <ExampleNotice />
 
       <div className="mb-5 flex items-center justify-between">
         <Tabs

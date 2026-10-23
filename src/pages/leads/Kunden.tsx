@@ -1,27 +1,29 @@
-import { useMemo } from 'react'
-import { useApp } from '../../context/AppContext'
 import { SectionHeader, KpiTile } from '../../components/ui'
 import LeadTable from '../../components/LeadTable'
-import { formatEuro } from '../../lib/utils'
+import LeadsGate from '../../components/LeadsGate'
+import { beitragSumme, filterKategorie } from '../../lib/leads'
+import { formatEuroExact } from '../../lib/utils'
 
 export default function Kunden() {
-  const { state } = useApp()
-  const kunden = useMemo(() => state.leads.filter((l) => l.liste === 'kunde'), [state.leads])
-
-  const gesamtFakturierung = kunden.reduce((sum, k) => sum + (k.beitragNeu ?? k.beitragAlt), 0)
-  const durchschnitt = kunden.length > 0 ? gesamtFakturierung / kunden.length : 0
-
   return (
     <div>
-      <SectionHeader title="Kundenbereich" subtitle="Gewonnene Leads, die erfolgreich in einen optimierten Tarif gewechselt sind" />
-
-      <div className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <KpiTile label="Gewonnene Kunden" value={String(kunden.length)} accent="green" />
-        <KpiTile label="Gesamt-Fakturierung" value={formatEuro(gesamtFakturierung)} hint="Monatliche Beitragssumme aller Kunden" accent="brand" />
-        <KpiTile label="Ø monatlicher Umsatz" value={formatEuro(durchschnitt)} hint="pro Kunde" />
-      </div>
-
-      <LeadTable leads={kunden} />
+      <SectionHeader title="Kundenbereich" subtitle="Gewonnene Leads (Status „Gewonnen“)" />
+      <LeadsGate>
+        {(leads) => {
+          const kunden = filterKategorie(leads, 'kunde')
+          const summe = beitragSumme(kunden)
+          return (
+            <>
+              <div className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <KpiTile label="Gewonnene Kunden" value={String(kunden.length)} accent="green" />
+                <KpiTile label="Summe Tarifbeiträge" value={formatEuroExact(summe)} hint="monatlich, aller gewonnenen Kunden" accent="brand" />
+                <KpiTile label="Ø Tarifbeitrag" value={formatEuroExact(kunden.length ? summe / kunden.length : 0)} hint="pro Kunde" />
+              </div>
+              <LeadTable leads={kunden} emptyText="Noch keine gewonnenen Kunden." />
+            </>
+          )
+        }}
+      </LeadsGate>
     </div>
   )
 }

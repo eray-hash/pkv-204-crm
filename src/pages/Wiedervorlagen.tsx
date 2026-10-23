@@ -1,21 +1,19 @@
 import { useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
-import { SectionHeader, Card, KpiTile, StatusBadge, Badge } from '../components/ui'
+import { SectionHeader, Card, KpiTile, StatusBadge, Badge, ExampleNotice } from '../components/ui'
 import { formatDateTime } from '../lib/utils'
 import { AlertTriangle, Phone, Mail } from 'lucide-react'
 
 export default function Wiedervorlagen() {
   const { state } = useApp()
-  const navigate = useNavigate()
 
   const wiedervorlagen = useMemo(
     () =>
-      state.leads
+      state.beispielLeads
         .filter((l) => l.wiedervorlage)
         .map((l) => ({ lead: l, ueberfaellig: new Date(l.wiedervorlage!.datum).getTime() < Date.now() }))
         .sort((a, b) => new Date(a.lead.wiedervorlage!.datum).getTime() - new Date(b.lead.wiedervorlage!.datum).getTime()),
-    [state.leads],
+    [state.beispielLeads],
   )
 
   const ueberfaelligCount = wiedervorlagen.filter((w) => w.ueberfaellig).length
@@ -23,6 +21,7 @@ export default function Wiedervorlagen() {
   return (
     <div>
       <SectionHeader title="Wiedervorlagen" subtitle="Leads und Kunden mit vereinbartem Rückruf- oder Nachfasstermin" />
+      <ExampleNotice />
 
       <div className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
         <KpiTile label="Wiedervorlagen gesamt" value={String(wiedervorlagen.length)} />
@@ -35,8 +34,7 @@ export default function Wiedervorlagen() {
         {wiedervorlagen.map(({ lead, ueberfaellig }) => (
           <Card
             key={lead.id}
-            onClick={() => navigate(`/leads/${lead.id}`)}
-            className={`cursor-pointer p-4 transition-colors hover:border-brand-200 ${ueberfaellig ? 'border-red-200 bg-red-50/60' : ''}`}
+            className={`p-4 ${ueberfaellig ? 'border-red-200 bg-red-50/60' : ''}`}
           >
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">

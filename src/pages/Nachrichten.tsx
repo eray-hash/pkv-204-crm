@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useApp } from '../context/AppContext'
 import { useToast } from '../components/ToastContext'
-import { Card, SectionHeader, Badge, Tabs, Field, inputClass, Button } from '../components/ui'
+import { Card, SectionHeader, Badge, Tabs, Field, inputClass, Button, ExampleNotice } from '../components/ui'
 import { formatDateTime } from '../lib/utils'
 import type { Nachricht } from '../types'
 import { Mail, Settings, CheckCircle2 } from 'lucide-react'
@@ -31,6 +31,7 @@ export default function Nachrichten() {
   return (
     <div>
       <SectionHeader title="Nachrichten" subtitle="Postfach für die Kommunikation mit Leads und Kunden" />
+      <ExampleNotice />
 
       <div className="mb-5">
         <Tabs

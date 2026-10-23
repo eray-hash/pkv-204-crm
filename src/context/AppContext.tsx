@@ -11,11 +11,7 @@ import type {
   Teammitglied,
   OnboardingVideo,
   Profil,
-  Aktivitaet,
-  Wiedervorlage,
-  LeadStatus,
   Blockzeit,
-  Rolle,
   TeamPerformance,
   ReklamationStatus,
 } from '../types'
@@ -35,8 +31,10 @@ import {
 } from '../data/seed'
 import { uid, isoDaysAgo } from '../lib/utils'
 
+/** Beispieldaten des Mockups. Echte Leads kommen aus der Datenbank (siehe LeadsContext). */
 export interface AppData {
-  leads: Lead[]
+  /** Beispiel-Leads, nur noch fuer Wiedervorlagen und Reklamationen (Beispieldaten) */
+  beispielLeads: Lead[]
   termine: Termin[]
   nachrichten: Nachricht[]
   auszahlungen: Auszahlung[]
@@ -49,17 +47,16 @@ export interface AppData {
   onboardingVideos: OnboardingVideo[]
   profil: Profil
   sprache: 'de' | 'en'
-  rolle: Rolle
 }
 
-const STORAGE_KEY = 'pkv-204-crm-data-v2'
+const STORAGE_KEY = 'pkv-204-crm-beispieldaten-v3'
 
 function buildSeed(): AppData {
-  const leads = buildLeads()
+  const beispielLeads = buildLeads()
   const teammitglieder = buildTeammitglieder()
   return {
-    leads,
-    termine: buildTermine(leads),
+    beispielLeads,
+    termine: buildTermine(beispielLeads),
     nachrichten: buildNachrichten(),
     auszahlungen: buildAuszahlungen(),
     umsatzverlauf: buildUmsatzverlauf(),
@@ -71,7 +68,6 @@ function buildSeed(): AppData {
     onboardingVideos: buildOnboardingVideos(),
     profil: buildProfil(),
     sprache: 'de',
-    rolle: 'mitarbeiter',
   }
 }
 
@@ -80,10 +76,7 @@ function loadInitial(): AppData {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (raw) {
       const parsed = JSON.parse(raw) as AppData
-      if (parsed && Array.isArray(parsed.leads)) {
-        // Ältere localStorage-Stände kennen Rolle/Team-Tracking noch nicht
-        if (!Array.isArray(parsed.teamPerformance)) parsed.teamPerformance = buildTeamPerformance(parsed.teammitglieder ?? [])
-        if (parsed.rolle !== 'mitarbeiter' && parsed.rolle !== 'geschaeftsfuehrer') parsed.rolle = 'mitarbeiter'
+      if (parsed && Array.isArray(parsed.beispielLeads) && Array.isArray(parsed.teamPerformance)) {
         return parsed
       }
     }
@@ -94,11 +87,6 @@ function loadInitial(): AppData {
 }
 
 type Action =
-  | { type: 'ADD_LEAD'; lead: Lead }
-  | { type: 'UPDATE_LEAD'; id: string; patch: Partial<Lead> }
-  | { type: 'SET_LEAD_STATUS'; id: string; status: LeadStatus }
-  | { type: 'ADD_AKTIVITAET'; leadId: string; aktivitaet: Aktivitaet }
-  | { type: 'SET_WIEDERVORLAGE'; leadId: string; wiedervorlage: Wiedervorlage | undefined }
   | { type: 'ADD_TERMIN'; termin: Termin }
   | { type: 'MARK_MESSAGE_READ'; id: string }
   | { type: 'REQUEST_PAYOUT'; betrag: number }
@@ -109,44 +97,11 @@ type Action =
   | { type: 'MARK_NOTIFICATION_READ'; id: string }
   | { type: 'MARK_ALL_NOTIFICATIONS_READ' }
   | { type: 'TOGGLE_TEAM_KALENDER'; id: string }
-  | { type: 'SET_ROLLE'; rolle: Rolle }
-  | { type: 'REKLAMIEREN_LEAD'; id: string; grund: string; notiz: string }
   | { type: 'SET_REKLAMATION_STATUS'; id: string; status: ReklamationStatus }
   | { type: 'RESET' }
 
 function reducer(state: AppData, action: Action): AppData {
   switch (action.type) {
-    case 'ADD_LEAD':
-      return { ...state, leads: [action.lead, ...state.leads] }
-    case 'UPDATE_LEAD':
-      return { ...state, leads: state.leads.map((l) => (l.id === action.id ? { ...l, ...action.patch } : l)) }
-    case 'SET_LEAD_STATUS':
-      return {
-        ...state,
-        leads: state.leads.map((l) =>
-          l.id === action.id
-            ? {
-                ...l,
-                status: action.status,
-                liste: action.status === 'Gewonnen' ? 'kunde' : action.status === 'Verloren' ? 'verloren' : l.liste,
-                aktivitaeten: [
-                  { id: uid('akt'), datum: isoDaysAgo(0), typ: 'status', text: `Status geändert zu „${action.status}“` },
-                  ...l.aktivitaeten,
-                ],
-              }
-            : l,
-        ),
-      }
-    case 'ADD_AKTIVITAET':
-      return {
-        ...state,
-        leads: state.leads.map((l) => (l.id === action.leadId ? { ...l, aktivitaeten: [action.aktivitaet, ...l.aktivitaeten] } : l)),
-      }
-    case 'SET_WIEDERVORLAGE':
-      return {
-        ...state,
-        leads: state.leads.map((l) => (l.id === action.leadId ? { ...l, wiedervorlage: action.wiedervorlage } : l)),
-      }
     case 'ADD_TERMIN':
       return { ...state, termine: [...state.termine, action.termin] }
     case 'MARK_MESSAGE_READ':
@@ -173,29 +128,12 @@ function reducer(state: AppData, action: Action): AppData {
         ...state,
         teammitglieder: state.teammitglieder.map((t) => (t.id === action.id ? { ...t, darfKalenderSehen: !t.darfKalenderSehen } : t)),
       }
-    case 'SET_ROLLE':
-      return { ...state, rolle: action.rolle }
-    case 'REKLAMIEREN_LEAD':
-      return {
-        ...state,
-        leads: state.leads.map((l) =>
-          l.id === action.id
-            ? {
-                ...l,
-                liste: 'reklamiert',
-                reklamation: { datum: isoDaysAgo(0), grund: action.grund, notiz: action.notiz, status: 'offen' },
-                aktivitaeten: [
-                  { id: uid('akt'), datum: isoDaysAgo(0), typ: 'status', text: `Lead reklamiert: ${action.grund}` },
-                  ...l.aktivitaeten,
-                ],
-              }
-            : l,
-        ),
-      }
     case 'SET_REKLAMATION_STATUS':
       return {
         ...state,
-        leads: state.leads.map((l) => (l.id === action.id && l.reklamation ? { ...l, reklamation: { ...l.reklamation, status: action.status } } : l)),
+        beispielLeads: state.beispielLeads.map((l) =>
+          l.id === action.id && l.reklamation ? { ...l, reklamation: { ...l.reklamation, status: action.status } } : l,
+        ),
       }
     case 'RESET':
       return buildSeed()

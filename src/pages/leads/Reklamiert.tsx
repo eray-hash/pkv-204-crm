@@ -1,8 +1,7 @@
 import { useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { useApp } from '../../context/AppContext'
 import { useToast } from '../../components/ToastContext'
-import { Card, SectionHeader, KpiTile, Badge, Button, inputClass, ScrollHint } from '../../components/ui'
+import { Card, SectionHeader, KpiTile, Badge, Button, inputClass, ScrollHint, ExampleNotice } from '../../components/ui'
 import { formatDate } from '../../lib/utils'
 import { REKLAMATION_STATUS_LABEL, type ReklamationStatus } from '../../types'
 import { ClipboardCopy, Download, AlertOctagon } from 'lucide-react'
@@ -10,14 +9,13 @@ import { ClipboardCopy, Download, AlertOctagon } from 'lucide-react'
 export default function Reklamiert() {
   const { state, dispatch } = useApp()
   const { showToast } = useToast()
-  const navigate = useNavigate()
 
   const reklamiert = useMemo(
     () =>
-      state.leads
+      state.beispielLeads
         .filter((l) => l.liste === 'reklamiert' && l.reklamation)
         .sort((a, b) => new Date(b.reklamation!.datum).getTime() - new Date(a.reklamation!.datum).getTime()),
-    [state.leads],
+    [state.beispielLeads],
   )
 
   const offen = reklamiert.filter((l) => l.reklamation!.status === 'offen').length
@@ -77,6 +75,8 @@ export default function Reklamiert() {
         }
       />
 
+      <ExampleNotice text="Beispieldaten – Reklamationen sind noch nicht mit der Datenbank verbunden (Schema folgt)." />
+
       <div className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
         <KpiTile label="Reklamationen gesamt" value={String(reklamiert.length)} />
         <KpiTile label="Offen (an Lieferant gemeldet)" value={String(offen)} accent="red" />
@@ -111,7 +111,7 @@ export default function Reklamiert() {
             <tbody>
               {reklamiert.map((l) => (
                 <tr key={l.id} className="border-b border-ink-50 last:border-0 hover:bg-ink-50/70">
-                  <td className="cursor-pointer px-4 py-3 font-medium text-ink-800" onClick={() => navigate(`/leads/${l.id}`)}>
+                  <td className="px-4 py-3 font-medium text-ink-800">
                     {l.name}
                   </td>
                   <td className="px-4 py-3 text-ink-500">

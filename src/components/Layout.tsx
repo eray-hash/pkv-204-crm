@@ -17,11 +17,13 @@ import {
   BarChart3,
   Menu,
   X as XIcon,
+  LogOut,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
+import { useAuth } from '../context/AuthContext'
+import { useLeads } from '../context/LeadsContext'
 import { NEWS_TICKER } from '../data/seed'
 import { formatDateTime } from '../lib/utils'
-import type { Rolle } from '../types'
 import { useToast } from './ToastContext'
 
 const leadSubLinks = [
@@ -35,6 +37,8 @@ const leadSubLinks = [
 
 export default function Layout() {
   const { state, dispatch } = useApp()
+  const { profile, signOut } = useAuth()
+  const { leads, queue, loading: leadsLoading } = useLeads()
   const { showToast } = useToast()
   const navigate = useNavigate()
   const location = useLocation()
@@ -42,7 +46,11 @@ export default function Layout() {
   const [notifOpen, setNotifOpen] = useState(false)
   const [tickerIndex, setTickerIndex] = useState(0)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
   const notifRef = useRef<HTMLDivElement>(null)
+  const userMenuRef = useRef<HTMLDivElement>(null)
+  const istGeschaeftsfuehrer = profile?.rolle === 'geschaeftsfuehrer'
+  const anzeigeName = profile?.name ?? ''
 
   const unreadMessages = state.nachrichten.filter((m) => !m.gelesen).length
   const unreadNotifs = state.benachrichtigungen.filter((n) => !n.gelesen).length
@@ -57,6 +65,7 @@ export default function Layout() {
   useEffect(() => {
     function onClick(e: MouseEvent) {
       if (notifRef.current && !notifRef.current.contains(e.target as Node)) setNotifOpen(false)
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) setUserMenuOpen(false)
     }
     document.addEventListener('mousedown', onClick)
     return () => document.removeEventListener('mousedown', onClick)
@@ -64,12 +73,13 @@ export default function Layout() {
 
   useEffect(() => {
     setMobileNavOpen(false)
+    setUserMenuOpen(false)
   }, [location.pathname])
 
   function handleReset() {
-    if (confirm('Alle Daten wirklich zurücksetzen? Dieser Vorgang kann nicht rückgängig gemacht werden.')) {
+    if (confirm('Die Beispieldaten (Kalender, Buchhaltung, Nachrichten usw.) wirklich zurücksetzen? Echte Leads aus der Datenbank sind davon nicht betroffen.')) {
       dispatch({ type: 'RESET' })
-      showToast('Daten wurden auf den Ausgangszustand zurückgesetzt')
+      showToast('Beispieldaten wurden auf den Ausgangszustand zurückgesetzt')
     }
   }
 
@@ -104,7 +114,6 @@ export default function Layout() {
         <div className="border-b border-ink-100 p-3 lg:hidden">
           <p className="mb-2 px-1 text-xs font-medium uppercase tracking-wide text-ink-400">Einstellungen</p>
           <div className="flex flex-wrap items-center gap-2">
-            <RoleSwitch />
             <LanguageSwitch />
           </div>
         </div>
@@ -122,7 +131,7 @@ export default function Layout() {
                 Leads
               </span>
               <span className="flex items-center gap-1.5">
-                <span className="rounded-full bg-brand-100 px-2 py-0.5 text-xs font-semibold text-brand-700">{state.leads.length}</span>
+                <span className="rounded-full bg-brand-100 px-2 py-0.5 text-xs font-semibold text-brand-700">{leadsLoading && leads.length === 0 ? '…' : leads.length}</span>
                 <ChevronDown size={16} className={`transition-transform ${leadsOpen ? 'rotate-180' : ''}`} />
               </span>
             </button>
@@ -148,7 +157,7 @@ export default function Layout() {
           <NavItem to="/kalender" icon={<CalendarDays size={18} />} label="Kalender" />
           <NavItem to="/nachrichten" icon={<Mail size={18} />} label="Nachrichten" />
           <NavItem to="/buchhaltung" icon={<Wallet size={18} />} label="Buchhaltung" />
-          {state.rolle === 'geschaeftsfuehrer' && <NavItem to="/team" icon={<BarChart3 size={18} />} label="Team" />}
+          {istGeschaeftsfuehrer && <NavItem to="/team" icon={<BarChart3 size={18} />} label="Team" />}
           <NavItem to="/hilfe" icon={<LifeBuoy size={18} />} label="Hilfe / Onboarding" />
           <NavItem to="/profil" icon={<UserCircle size={18} />} label="Mein Profil" />
         </nav>
@@ -159,7 +168,7 @@ export default function Layout() {
             className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-ink-500 hover:bg-ink-50"
           >
             <RotateCcw size={16} />
-            Daten zurücksetzen
+            Beispieldaten zurücksetzen
           </button>
         </div>
       </aside>
@@ -185,16 +194,20 @@ export default function Layout() {
 
           <div className="flex shrink-0 items-center gap-1 lg:gap-1.5">
             <div className="hidden items-center gap-1.5 lg:flex">
-              <RoleSwitch />
               <LanguageSwitch />
             </div>
 
             <button
               onClick={() => navigate('/leads/power-dialer')}
-              title="Power Dialer öffnen"
+              title={`Power Dialer öffnen (${queue.length} anrufbar)`}
               className="relative rounded-lg p-2 text-ink-500 hover:bg-ink-100"
             >
               <Phone size={19} />
+              {queue.length > 0 && (
+                <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-brand-600 px-1 text-[10px] font-bold text-white">
+                  {queue.length}
+                </span>
+              )}
             </button>
 
             <button onClick={() => navigate('/nachrichten')} title="Postfach" className="relative rounded-lg p-2 text-ink-500 hover:bg-ink-100">
@@ -222,7 +235,9 @@ export default function Layout() {
               {notifOpen && (
                 <div className="absolute right-0 z-40 mt-2 w-[85vw] max-w-xs rounded-xl border border-ink-100 bg-white p-2 shadow-lg">
                   <div className="flex items-center justify-between px-2 py-1">
-                    <p className="text-sm font-semibold text-ink-800">Benachrichtigungen</p>
+                    <p className="text-sm font-semibold text-ink-800">
+                      Benachrichtigungen <span className="text-xs font-normal text-amber-600">(Beispieldaten)</span>
+                    </p>
                     <button
                       onClick={() => dispatch({ type: 'MARK_ALL_NOTIFICATIONS_READ' })}
                       className="text-xs font-medium text-brand-600 hover:underline"
@@ -254,14 +269,43 @@ export default function Layout() {
               )}
             </div>
 
-            <div className="ml-2 flex items-center gap-2 border-l border-ink-100 pl-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-ink-800 text-xs font-semibold text-white">
-                {initials(state.profil.name)}
-              </div>
-              <div className="hidden sm:block">
-                <p className="text-sm font-medium leading-tight text-ink-800">{state.profil.name}</p>
-                <p className="text-xs leading-tight text-ink-400">Vertriebspartner</p>
-              </div>
+            <div className="relative ml-2 border-l border-ink-100 pl-3" ref={userMenuRef}>
+              <button
+                onClick={() => setUserMenuOpen((v) => !v)}
+                className="flex items-center gap-2 rounded-lg p-1 hover:bg-ink-50"
+                aria-haspopup="menu"
+                aria-expanded={userMenuOpen}
+                aria-label="Profilmenü"
+              >
+                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-ink-800 text-xs font-semibold text-white">{initials(anzeigeName)}</div>
+                <div className="hidden text-left sm:block">
+                  <p className="text-sm font-medium leading-tight text-ink-800">{anzeigeName}</p>
+                  <p className="text-xs leading-tight text-ink-400">{istGeschaeftsfuehrer ? 'Geschäftsführer' : 'Mitarbeiter'}</p>
+                </div>
+                <ChevronDown size={14} className="hidden text-ink-400 sm:block" />
+              </button>
+              {userMenuOpen && (
+                <div role="menu" className="absolute right-0 z-40 mt-2 w-60 rounded-xl border border-ink-100 bg-white p-1.5 shadow-lg">
+                  <div className="px-3 py-2">
+                    <p className="truncate text-sm font-semibold text-ink-800">{anzeigeName}</p>
+                    <p className="text-xs text-ink-400">{istGeschaeftsfuehrer ? 'Geschäftsführer' : 'Mitarbeiter'}</p>
+                  </div>
+                  <button
+                    role="menuitem"
+                    onClick={() => navigate('/profil')}
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-ink-700 hover:bg-ink-50"
+                  >
+                    <UserCircle size={16} /> Mein Profil
+                  </button>
+                  <button
+                    role="menuitem"
+                    onClick={() => void signOut()}
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+                  >
+                    <LogOut size={16} /> Abmelden
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </header>
@@ -295,21 +339,6 @@ function NavItem({ to, icon, label, end }: { to: string; icon: ReactNode; label:
       {icon}
       {label}
     </NavLink>
-  )
-}
-
-function RoleSwitch() {
-  const { state, dispatch } = useApp()
-  return (
-    <select
-      value={state.rolle}
-      onChange={(e) => dispatch({ type: 'SET_ROLLE', rolle: e.target.value as Rolle })}
-      title="Ansicht wechseln (Mockup-Rollensystem, da noch kein echtes Login besteht)"
-      className="rounded-lg border border-ink-200 bg-white px-2 py-1.5 text-xs font-semibold text-ink-600 hover:bg-ink-50 focus:outline-none focus:ring-2 focus:ring-brand-100"
-    >
-      <option value="mitarbeiter">Ansicht: Mitarbeiter</option>
-      <option value="geschaeftsfuehrer">Ansicht: Geschäftsführer</option>
-    </select>
   )
 }
 

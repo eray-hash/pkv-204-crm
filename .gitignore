@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Lokale Ueberschreibungen (nicht committen)
+.env.local
+.env.*.local

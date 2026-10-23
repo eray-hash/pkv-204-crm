@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { X, MoveHorizontal } from 'lucide-react'
+import { X, MoveHorizontal, FlaskConical, Loader2, AlertCircle } from 'lucide-react'
 
 export function Card({
   children,
@@ -118,7 +118,7 @@ export function Badge({
     amber: 'bg-amber-100 text-amber-700',
     green: 'bg-emerald-100 text-emerald-700',
   }
-  return <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${tones[tone]} ${className}`}>{children}</span>
+  return <span className={`inline-flex items-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ${tones[tone]} ${className}`}>{children}</span>
 }
 
 export function StatusBadge({ status }: { status: string }) {
@@ -214,4 +214,37 @@ export function ScrollHint() {
 
 export function EmptyState({ text }: { text: string }) {
   return <div className="rounded-xl border border-dashed border-ink-200 p-8 text-center text-sm text-ink-400">{text}</div>
+}
+
+/** Dezenter Hinweis auf Seiten, die noch Beispieldaten statt Datenbank-Daten zeigen. */
+export function ExampleNotice({ text = 'Beispieldaten – dieser Bereich ist noch nicht mit der Datenbank verbunden.' }: { text?: string }) {
+  return (
+    <div className="mb-4 inline-flex max-w-full items-center gap-1.5 rounded-lg bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700">
+      <FlaskConical size={13} className="shrink-0" />
+      <span>{text}</span>
+    </div>
+  )
+}
+
+export function LoadingBlock({ text = 'Daten werden geladen …' }: { text?: string }) {
+  return (
+    <div className="flex items-center justify-center gap-2 rounded-2xl border border-ink-100 bg-white p-10 text-sm text-ink-500 shadow-sm" role="status">
+      <Loader2 size={18} className="animate-spin text-brand-500" />
+      {text}
+    </div>
+  )
+}
+
+export function ErrorBlock({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  return (
+    <div className="flex flex-col items-center gap-3 rounded-2xl border border-red-100 bg-red-50/60 p-8 text-center" role="alert">
+      <AlertCircle size={24} className="text-red-500" />
+      <p className="text-sm text-red-700">{message}</p>
+      {onRetry && (
+        <button onClick={onRetry} className="rounded-lg bg-white px-3.5 py-2 text-sm font-medium text-ink-700 shadow-sm ring-1 ring-ink-200 hover:bg-ink-50">
+          Erneut versuchen
+        </button>
+      )}
+    </div>
+  )
 }

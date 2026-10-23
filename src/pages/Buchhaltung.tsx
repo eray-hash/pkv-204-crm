@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useApp } from '../context/AppContext'
 import { useToast } from '../components/ToastContext'
-import { Card, SectionHeader, KpiTile, Badge, Modal, Button } from '../components/ui'
+import { Card, SectionHeader, KpiTile, Badge, Modal, Button, ExampleNotice } from '../components/ui'
 import SimpleBarChart from '../components/SimpleBarChart'
 import { formatEuro, formatDate } from '../lib/utils'
 
@@ -62,6 +62,7 @@ export default function Buchhaltung() {
   return (
     <div>
       <SectionHeader title="Buchhaltung" subtitle="Umsatz, Provisionen und Auszahlungen im Überblick" />
+      <ExampleNotice />
 
       <Card className="mb-5 p-3">
         <div className="flex flex-wrap items-center gap-2">
