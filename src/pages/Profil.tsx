@@ -4,8 +4,9 @@ import Profildaten from './profil/Profildaten'
 import KalenderEinstellungen from './profil/KalenderEinstellungen'
 import SalesProvision from './profil/SalesProvision'
 import TeamProvision from './profil/TeamProvision'
+import Telefonie from './profil/Telefonie'
 
-type Tab = 'profildaten' | 'kalender' | 'sales' | 'team'
+type Tab = 'profildaten' | 'telefonie' | 'kalender' | 'sales' | 'team'
 
 export default function Profil() {
   const [tab, setTab] = useState<Tab>('profildaten')
@@ -13,12 +14,13 @@ export default function Profil() {
   return (
     <div>
       <SectionHeader title="Mein Profil" subtitle="Profildaten, Kalendereinstellungen und Provisionsübersichten" />
-      <ExampleNotice text="Beispieldaten – Profildetails, Kalender und Provisionen sind noch nicht mit der Datenbank verbunden. Name und Rolle stammen aus Ihrem Konto." />
+      {tab !== 'telefonie' && <ExampleNotice text="Beispieldaten – Profildetails, Kalender und Provisionen sind noch nicht mit der Datenbank verbunden. Name und Rolle stammen aus Ihrem Konto." />}
 
       <div className="mb-5">
         <Tabs
           tabs={[
             { id: 'profildaten', label: 'Profildaten' },
+            { id: 'telefonie', label: 'Telefonie' },
             { id: 'kalender', label: 'Kalender-Einstellungen' },
             { id: 'sales', label: 'Sales-Provision' },
             { id: 'team', label: 'Team-Provision' },
@@ -29,6 +31,7 @@ export default function Profil() {
       </div>
 
       {tab === 'profildaten' && <Profildaten />}
+      {tab === 'telefonie' && <Telefonie />}
       {tab === 'kalender' && <KalenderEinstellungen />}
       {tab === 'sales' && <SalesProvision />}
       {tab === 'team' && <TeamProvision />}

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { CalendarCheck, Clock3, Info, PartyPopper, Phone, PhoneOff, RefreshCw, Smartphone, ThumbsDown } from 'lucide-react'
+import { CalendarCheck, Clock3, Info, Loader2, PartyPopper, Phone, PhoneOff, RefreshCw, Smartphone, ThumbsDown } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useLeads } from '../../context/LeadsContext'
 import { useToast } from '../../components/ToastContext'
 import { Badge, Button, Card, ErrorBlock, LoadingBlock, SectionHeader, inputClass } from '../../components/ui'
 import { addNotiz, fetchNotizen, logAnruf, type Notiz } from '../../lib/leadsApi'
+import { anrufenSipgate, telefonieStatus as ladeTelefonieStatus } from '../../lib/telefonieApi'
+import { sollAufTelFallen } from '../../lib/telefonie'
 import {
   ageInDays,
   dialerPatch,
@@ -48,7 +50,11 @@ export default function PowerDialer() {
 
   const [notiz, setNotiz] = useState('')
   const [vorherige, setVorherige] = useState<Notiz[]>([])
-  const [angerufen, setAngerufen] = useState<{ kanal: AnrufKanal; zeit: string } | null>(null)
+  const [angerufen, setAngerufen] = useState<{ kanal: AnrufKanal; zeit: string; sipgate?: boolean } | null>(null)
+  // sipgate-Telefonie: 'laden' bis der Status bekannt ist; bei Fehlern/ohne Verbindung faellt "Mobil" auf tel: zurueck
+  const [telefonie, setTelefonie] = useState<'laden' | 'verbunden' | 'nicht_verbunden'>('laden')
+  const [mobilBusy, setMobilBusy] = useState(false)
+  const [mobilFehler, setMobilFehler] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [spaeterOffen, setSpaeterOffen] = useState(false)
   const [spaeterWert, setSpaeterWert] = useState(morgenFrueh)
@@ -58,6 +64,17 @@ export default function PowerDialer() {
     if (liste === null && !loading && !queueError) setListe(queue)
   }, [liste, loading, queueError, queue])
 
+  // Ist sipgate verbunden? (schnelle Abfrage ohne Live-Pruefung bei sipgate)
+  useEffect(() => {
+    let aktiv = true
+    void ladeTelefonieStatus(false).then((res) => {
+      if (aktiv) setTelefonie(res.data?.verbunden ? 'verbunden' : 'nicht_verbunden')
+    })
+    return () => {
+      aktiv = false
+    }
+  }, [])
+
   const aktuell = liste?.[index] ?? null
   const aktuellId = aktuell?.id ?? null
 
@@ -65,6 +82,7 @@ export default function PowerDialer() {
   useEffect(() => {
     setNotiz('')
     setAngerufen(null)
+    setMobilFehler(null)
     setSpaeterOffen(false)
     setBestaetige(null)
     setVorherige([])
@@ -95,6 +113,27 @@ export default function PowerDialer() {
     const err = await logAnruf(aktuell.id, session.user.id, kanal)
     if (err) showToast(`${err} Der Anruf wird trotzdem gestartet.`, 'info')
     else setAngerufen({ kanal, zeit: new Date().toISOString() })
+  }
+
+  // Mobil (Satellite) ueber sipgate: Es wird nur die Lead-ID gesendet; die Funktion laedt die Nummer selbst und protokolliert den Anruf.
+  async function mobilUeberSipgate() {
+    if (!aktuell || mobilBusy) return
+    setMobilBusy(true)
+    setMobilFehler(null)
+    setAngerufen(null)
+    const res = await anrufenSipgate(aktuell.id)
+    setMobilBusy(false)
+    if (res.error) {
+      if (sollAufTelFallen(res.code)) {
+        setTelefonie('nicht_verbunden')
+        showToast('Telefonie nicht verbunden (Mein Profil → Telefonie). „Mobil“ nutzt jetzt die Telefon-Anwendung.', 'info')
+      } else {
+        setMobilFehler(res.error)
+      }
+      return
+    }
+    setAngerufen({ kanal: 'mobil', zeit: new Date().toISOString(), sipgate: true })
+    showToast('Dein Telefon klingelt gleich.')
   }
 
   async function notizSpeichern(): Promise<boolean> {
@@ -269,21 +308,55 @@ export default function PowerDialer() {
           >
             <Phone size={17} /> Festnetz (Webex)
           </a>
-          <a
-            href={telHref(aktuell.telefon)}
-            onClick={() => void anrufen('mobil')}
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-600 px-3.5 py-3 text-sm font-medium text-white shadow-sm hover:bg-brand-700"
-          >
-            <Smartphone size={17} /> Mobil (Satellite)
-          </a>
+          {telefonie === 'nicht_verbunden' ? (
+            <a
+              href={telHref(aktuell.telefon)}
+              onClick={() => void anrufen('mobil')}
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-600 px-3.5 py-3 text-sm font-medium text-white shadow-sm hover:bg-brand-700"
+            >
+              <Smartphone size={17} /> Mobil (Satellite)
+            </a>
+          ) : (
+            <button
+              type="button"
+              disabled={telefonie === 'laden' || mobilBusy}
+              onClick={() => void mobilUeberSipgate()}
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-600 px-3.5 py-3 text-sm font-medium text-white shadow-sm hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {telefonie === 'laden' || mobilBusy ? <Loader2 size={17} className="animate-spin" /> : <Smartphone size={17} />}
+              {mobilBusy ? 'Verbindung wird aufgebaut …' : 'Mobil (Satellite)'}
+            </button>
+          )}
         </div>
         <p className="mt-2 flex items-start gap-1.5 text-xs text-ink-400">
           <Info size={13} className="mt-0.5 shrink-0" />
-          Die echte Webex- bzw. Satellite-Anbindung folgt noch. Bis dahin öffnet der Button die Telefon-Anwendung des Geräts (tel:) und protokolliert den Anruf.
+          {telefonie === 'verbunden' ? (
+            <span>
+              „Mobil (Satellite)“ löst den Anruf über sipgate aus: Zuerst klingelt Ihr Gerät, danach wird der Lead verbunden. „Festnetz (Webex)“ öffnet die
+              Telefon-Anwendung (tel:); die Webex-Anbindung folgt noch.
+            </span>
+          ) : telefonie === 'nicht_verbunden' ? (
+            <span>
+              Telefonie nicht verbunden (<Link to="/profil" className="font-medium text-brand-700 hover:underline">Mein Profil → Telefonie</Link>). „Mobil“ öffnet bis dahin die
+              Telefon-Anwendung des Geräts (tel:) und protokolliert den Anruf. Die Webex-Anbindung folgt noch.
+            </span>
+          ) : (
+            <span>Telefonie-Status wird geprüft …</span>
+          )}
         </p>
+        {mobilFehler && (
+          <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
+            {mobilFehler}{' '}
+            <a href={telHref(aktuell.telefon)} onClick={() => void anrufen('mobil')} className="font-medium underline">
+              Stattdessen mit der Telefon-Anwendung anrufen
+            </a>
+          </p>
+        )}
         {angerufen && (
           <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700" role="status">
-            Anruf über {angerufen.kanal === 'mobil' ? 'Mobil (Satellite)' : 'Festnetz (Webex)'} protokolliert ({formatDateTime(angerufen.zeit)}).
+            {angerufen.sipgate
+              ? `Anruf über sipgate ausgelöst (${formatDateTime(angerufen.zeit)}) – Ihr Telefon klingelt gleich.`
+              : `Anruf über ${angerufen.kanal === 'mobil' ? 'Mobil (Satellite)' : 'Festnetz (Webex)'} protokolliert (${formatDateTime(angerufen.zeit)}).`}
           </p>
         )}
 
