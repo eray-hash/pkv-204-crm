@@ -105,7 +105,7 @@ export default function LeadDetail() {
       liste.push({ id: 'consent', zeit: zusatz.einwilligung.einwilligung_zeit, text: 'Einwilligung erteilt', icon: <ShieldCheck size={14} /> })
     }
     for (const a of zusatz.anrufe) {
-      liste.push({ id: `a-${a.id}`, zeit: a.gestartet_am, text: `Anruf über ${a.kanal === 'mobil' ? 'Mobil (Satellite)' : 'Festnetz (Webex)'} – ${a.autor}`, icon: <PhoneCall size={14} /> })
+      liste.push({ id: `a-${a.id}`, zeit: a.gestartet_am, text: `Anruf über ${a.kanal === 'mobil' ? 'Mobil (Satellite)' : 'Anrufen (Telefon-App)'} – ${a.autor}`, icon: <PhoneCall size={14} /> })
     }
     for (const n of zusatz.notizen) {
       liste.push({ id: `n-${n.id}`, zeit: n.created_at, text: `Notiz von ${n.autor}`, icon: <MessageSquare size={14} /> })

@@ -194,6 +194,7 @@ export async function fetchAnrufe(leadId: string): Promise<Ergebnis<Anruf[]>> {
   if (error) return fehler('Die Anrufe konnten nicht geladen werden.', error)
   const anrufe: Anruf[] = (data ?? []).map((r) => ({
     id: String(r.id),
+    // 'festnetz' ist der historische Name des Kanals Telefon-App (Check-Constraint anrufe.kanal).
     kanal: r.kanal === 'mobil' ? 'mobil' : 'festnetz',
     gestartet_am: String(r.gestartet_am),
     autor: autorName((r as { profiles?: unknown }).profiles),

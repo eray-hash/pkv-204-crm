@@ -425,12 +425,13 @@ export default function PowerDialer() {
         </div>
 
         <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {/* Kanal heisst in der Datenbank historisch 'festnetz' (Check-Constraint anrufe.kanal); der Button oeffnet nur die Telefon-App (tel:). */}
           <a
             href={telHref(aktuell.telefon)}
             onClick={(e) => void telKlick(e, 'festnetz')}
             className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-600 px-3.5 py-3 text-sm font-medium text-white shadow-sm hover:bg-brand-700"
           >
-            <Phone size={17} /> Festnetz (Webex)
+            <Phone size={17} /> Anrufen (Telefon-App)
           </a>
           {telefonie === 'nicht_verbunden' ? (
             <a
@@ -456,13 +457,13 @@ export default function PowerDialer() {
           <Info size={13} className="mt-0.5 shrink-0" />
           {telefonie === 'verbunden' ? (
             <span>
-              „Mobil (Satellite)“ löst den Anruf über sipgate aus: Zuerst klingelt Ihr Gerät, danach wird der Lead verbunden. „Festnetz (Webex)“ öffnet die
-              Telefon-Anwendung (tel:); die Webex-Anbindung folgt noch.
+              „Mobil (Satellite)“ löst den Anruf über sipgate aus: Zuerst klingelt Ihr Gerät, danach wird der Lead verbunden. „Anrufen (Telefon-App)“ öffnet die
+              Telefon-Anwendung (tel:); die Anbindung an eine eigene Telefonie folgt.
             </span>
           ) : telefonie === 'nicht_verbunden' ? (
             <span>
               Telefonie nicht verbunden (<Link to="/profil" className="font-medium text-brand-700 hover:underline">Mein Profil → Telefonie</Link>). „Mobil“ öffnet bis dahin die
-              Telefon-Anwendung des Geräts (tel:) und protokolliert den Anruf. Die Webex-Anbindung folgt noch.
+              Telefon-Anwendung des Geräts (tel:) und protokolliert den Anruf. Die Anbindung an eine eigene Telefonie folgt.
             </span>
           ) : (
             <span>Telefonie-Status wird geprüft …</span>
@@ -480,7 +481,7 @@ export default function PowerDialer() {
           <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700" role="status">
             {angerufen.sipgate
               ? `Anruf über sipgate ausgelöst (${formatDateTime(angerufen.zeit)}) – Ihr Telefon klingelt gleich.`
-              : `Anruf über ${angerufen.kanal === 'mobil' ? 'Mobil (Satellite)' : 'Festnetz (Webex)'} protokolliert (${formatDateTime(angerufen.zeit)}).`}
+              : `Anruf über ${angerufen.kanal === 'mobil' ? 'Mobil (Satellite)' : 'Anrufen (Telefon-App)'} protokolliert (${formatDateTime(angerufen.zeit)}).`}
           </p>
         )}
 
