@@ -1,5 +1,6 @@
 import { useAuth } from '../../context/AuthContext'
 import { Card } from '../../components/ui'
+import PasswortAendern from './PasswortAendern'
 
 function Zeile({ label, wert }: { label: string; wert: string | null | undefined }) {
   return (
@@ -14,6 +15,7 @@ function Zeile({ label, wert }: { label: string; wert: string | null | undefined
 export default function Profildaten() {
   const { profile, session } = useAuth()
   return (
+    <>
     <Card className="p-5">
       <h2 className="mb-4 font-semibold text-ink-800">Kontaktdaten</h2>
       <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -24,9 +26,10 @@ export default function Profildaten() {
         <Zeile label="Telefon (Mobil)" wert={profile?.telefon_mobil} />
       </dl>
       <p className="mt-4 text-xs text-ink-400">
-        Diese Angaben stammen aus Ihrem Konto. Das Bearbeiten ist noch nicht angebunden. Ein neues Passwort können Sie über „Passwort vergessen?“ auf
-        der Anmeldeseite anfordern.
+        Diese Angaben stammen aus Ihrem Konto. Das Bearbeiten ist noch nicht angebunden.
       </p>
     </Card>
+    <PasswortAendern />
+    </>
   )
 }

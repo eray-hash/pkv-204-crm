@@ -1,10 +1,11 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase, supabaseKonfiguriert } from '../lib/supabase'
 import { mapAuthError } from '../lib/authErrors'
 import { fetchProfil, updateErreichbarkeit, type ErreichbarkeitPatch } from '../lib/profilesApi'
 import type { Profile, Rolle } from '../lib/profil'
 import { setAnzeigeZeitzone } from '../lib/zeit'
+import { startLink, startPasswortPflicht, bereinigeAdresse, loeschePasswortPflicht } from '../lib/linkStart'
 
 export type { Rolle, Profile }
 
@@ -15,8 +16,10 @@ interface AuthContextValue {
   loading: boolean
   /** Fehler beim Laden des Profils (z. B. kein Profil vorhanden) */
   profileError: string | null
-  /** true, wenn der Nutzer ueber einen Link zum Zuruecksetzen des Passworts gekommen ist */
+  /** true, wenn der Nutzer ueber einen Einladungs- oder Passwort-zuruecksetzen-Link kommt: Er muss zuerst ein Passwort festlegen. */
   recovery: boolean
+  /** Verstaendliche Fehlermeldung, wenn der Link aus der E-Mail abgelaufen/ungueltig war */
+  linkFehler: string | null
   signIn: (email: string, password: string) => Promise<string | null>
   signOut: () => Promise<void>
   sendPasswordReset: (email: string) => Promise<string | null>
@@ -32,7 +35,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [sessionChecked, setSessionChecked] = useState(!supabaseKonfiguriert)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [profileError, setProfileError] = useState<string | null>(null)
-  const [recovery, setRecovery] = useState(false)
+  // Einladung/Recovery: schon beim Start aus der Adresse ermittelt (der Supabase-Client meldet bei Einladungen nur SIGNED_IN)
+  const [recovery, setRecovery] = useState(startPasswortPflicht)
+  const recoveryRef = useRef(recovery)
+  recoveryRef.current = recovery
+  const linkFehler = startLink?.fehler ?? null
 
   // Sitzung wiederherstellen und auf Aenderungen hoeren (Login, Logout, Token-Erneuerung)
   useEffect(() => {
@@ -44,10 +51,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!aktiv) return
         setSession(data.session)
         setSessionChecked(true)
+        // Token/Fehler aus der Adresse entfernen, sobald der Supabase-Client sie verarbeitet hat
+        if (startLink) bereinigeAdresse()
       })
       .catch(() => {
         if (!aktiv) return
         setSessionChecked(true)
+        if (startLink) bereinigeAdresse()
       })
     // Kein weiterer Supabase-Aufruf direkt im Callback (Deadlock-Gefahr), nur State setzen.
     const { data: sub } = supabase.auth.onAuthStateChange((event, next) => {
@@ -115,6 +125,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Bei Netzwerkproblemen die lokale Sitzung trotzdem beenden, damit man nicht "festhaengt".
     if (error) await supabase.auth.signOut({ scope: 'local' })
     setRecovery(false)
+    loeschePasswortPflicht()
   }, [])
 
   const sendPasswordReset = useCallback(async (email: string) => {
@@ -125,8 +136,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const updatePassword = useCallback(async (password: string) => {
     const { error } = await supabase.auth.updateUser({ password })
-    if (error) return mapAuthError(error)
-    setRecovery(false)
+    if (error) return mapAuthError(error, 'Das Passwort konnte nicht geändert werden. Bitte erneut versuchen.')
+    // Nach Einladung/Link: sauber auf die Startseite; beim normalen Aendern im Profil bleibt der Nutzer dort
+    if (recoveryRef.current) {
+      setRecovery(false)
+      loeschePasswortPflicht()
+      bereinigeAdresse()
+    }
     return null
   }, [])
 
@@ -137,13 +153,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading: !sessionChecked || (Boolean(userId) && !profile && !profileError),
       profileError,
       recovery,
+      linkFehler,
       signIn,
       signOut,
       sendPasswordReset,
       updatePassword,
       updateProfil,
     }),
-    [session, profile, sessionChecked, userId, profileError, recovery, signIn, signOut, sendPasswordReset, updatePassword, updateProfil],
+    [session, profile, sessionChecked, userId, profileError, recovery, linkFehler, signIn, signOut, sendPasswordReset, updatePassword, updateProfil],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

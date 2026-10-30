@@ -3,6 +3,7 @@ import { AlertCircle, CheckCircle2, Loader2 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { inputClass, Field } from '../components/ui'
 import PasswortFeld from '../components/PasswortFeld'
+import { pruefeNeuesPasswort } from '../lib/passwort'
 
 type Modus = 'login' | 'reset' | 'neuesPasswort'
 
@@ -58,14 +59,14 @@ function Senden({ busy, children }: { busy: boolean; children: ReactNode }) {
   )
 }
 
-export default function Login({ start = 'login' }: { start?: Modus }) {
+export default function Login({ start = 'login', startFehler = null }: { start?: Modus; startFehler?: string | null }) {
   const { signIn, sendPasswordReset, updatePassword } = useAuth()
   const [modus, setModus] = useState<Modus>(start)
   const [email, setEmail] = useState('')
   const [passwort, setPasswort] = useState('')
   const [passwort2, setPasswort2] = useState('')
   const [busy, setBusy] = useState(false)
-  const [fehler, setFehler] = useState<string | null>(null)
+  const [fehler, setFehler] = useState<string | null>(startFehler)
   const [erfolg, setErfolg] = useState<string | null>(null)
 
   function wechsle(m: Modus) {
@@ -105,12 +106,9 @@ export default function Login({ start = 'login' }: { start?: Modus }) {
   async function neuesSetzen(e: FormEvent) {
     e.preventDefault()
     setFehler(null)
-    if (passwort.length < 8) {
-      setFehler('Das Passwort muss mindestens 8 Zeichen lang sein.')
-      return
-    }
-    if (passwort !== passwort2) {
-      setFehler('Die beiden Passwörter stimmen nicht überein.')
+    const pruefung = pruefeNeuesPasswort(passwort, passwort2)
+    if (pruefung) {
+      setFehler(pruefung)
       return
     }
     setBusy(true)

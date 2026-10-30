@@ -1,3 +1,5 @@
+// Muss zuerst kommen: wertet Einladungs-/Recovery-Links aus, bevor der Supabase-Client den URL-Hash verarbeitet.
+import './lib/linkStart'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'

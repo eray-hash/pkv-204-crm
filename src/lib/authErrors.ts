@@ -7,7 +7,7 @@ interface AuthErrorLike {
   name?: string
 }
 
-export function mapAuthError(error: unknown): string {
+export function mapAuthError(error: unknown, fallback = 'Die Anmeldung ist fehlgeschlagen. Bitte erneut versuchen.'): string {
   const e = (error && typeof error === 'object' ? error : {}) as AuthErrorLike
   const message = (e.message ?? '').toLowerCase()
   const code = (e.code ?? '').toLowerCase()
@@ -30,11 +30,14 @@ export function mapAuthError(error: unknown): string {
   if (code === 'same_password' || message.includes('different from the old password')) {
     return 'Das neue Passwort muss sich vom bisherigen unterscheiden.'
   }
+  if (code === 'reauthentication_needed' || code === 'session_not_found' || code === 'session_expired' || message.includes('auth session missing')) {
+    return 'Aus Sicherheitsgründen bitte kurz abmelden und erneut anmelden, dann den Vorgang wiederholen.'
+  }
   if (message.includes('failed to fetch') || message.includes('networkerror') || message.includes('network request failed') || e.name === 'AuthRetryableFetchError') {
     return 'Keine Verbindung zum Server. Bitte die Internetverbindung prüfen und erneut versuchen.'
   }
   if (message.includes('invalid email') || code === 'validation_failed') {
     return 'Bitte eine gültige E-Mail-Adresse eingeben.'
   }
-  return 'Die Anmeldung ist fehlgeschlagen. Bitte erneut versuchen.'
+  return fallback
 }

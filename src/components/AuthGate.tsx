@@ -10,7 +10,7 @@ function Vollbild({ children }: { children: ReactNode }) {
 
 /** Zeigt die App nur nach erfolgreicher Anmeldung. Ohne Sitzung erscheint (auf jeder Adresse) die Login-Seite. */
 export default function AuthGate({ children }: { children: ReactNode }) {
-  const { session, profile, loading, profileError, recovery, signOut } = useAuth()
+  const { session, profile, loading, profileError, recovery, linkFehler, signOut } = useAuth()
 
   if (!supabaseKonfiguriert) {
     return (
@@ -33,7 +33,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   }
 
   if (session && recovery) return <Login key="recovery" start="neuesPasswort" />
-  if (!session) return <Login key="login" />
+  if (!session) return <Login key="login" startFehler={linkFehler} />
 
   if (!profile) {
     return (
