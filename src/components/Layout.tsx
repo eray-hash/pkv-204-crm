@@ -12,19 +12,13 @@ import {
   Bell,
   Phone,
   ChevronDown,
-  Megaphone,
-  RotateCcw,
   BarChart3,
   Menu,
   X as XIcon,
   LogOut,
 } from 'lucide-react'
-import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { useLeads } from '../context/LeadsContext'
-import { NEWS_TICKER } from '../data/seed'
-import { formatDateTime } from '../lib/utils'
-import { useToast } from './ToastContext'
 import { LiveSwitch, PraesenzListe, PraesenzMenu } from './Praesenz'
 
 const leadSubLinks = [
@@ -37,31 +31,18 @@ const leadSubLinks = [
 ]
 
 export default function Layout() {
-  const { state, dispatch } = useApp()
   const { profile, signOut } = useAuth()
   const { leads, queue, loading: leadsLoading } = useLeads()
-  const { showToast } = useToast()
   const navigate = useNavigate()
   const location = useLocation()
   const [leadsOpen, setLeadsOpen] = useState(true)
   const [notifOpen, setNotifOpen] = useState(false)
-  const [tickerIndex, setTickerIndex] = useState(0)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const notifRef = useRef<HTMLDivElement>(null)
   const userMenuRef = useRef<HTMLDivElement>(null)
   const istGeschaeftsfuehrer = profile?.rolle === 'geschaeftsfuehrer'
   const anzeigeName = profile?.name ?? ''
-
-  const unreadMessages = state.nachrichten.filter((m) => !m.gelesen).length
-  const unreadNotifs = state.benachrichtigungen.filter((n) => !n.gelesen).length
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setTickerIndex((i) => (i + 1) % NEWS_TICKER.length)
-    }, 6000)
-    return () => clearInterval(interval)
-  }, [])
 
   useEffect(() => {
     function onClick(e: MouseEvent) {
@@ -76,13 +57,6 @@ export default function Layout() {
     setMobileNavOpen(false)
     setUserMenuOpen(false)
   }, [location.pathname])
-
-  function handleReset() {
-    if (confirm('Die Beispieldaten (Kalender, Buchhaltung, Nachrichten usw.) wirklich zurücksetzen? Echte Leads aus der Datenbank sind davon nicht betroffen.')) {
-      dispatch({ type: 'RESET' })
-      showToast('Beispieldaten wurden auf den Ausgangszustand zurückgesetzt')
-    }
-  }
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-ink-50">
@@ -116,7 +90,6 @@ export default function Layout() {
           <p className="mb-2 px-1 text-xs font-medium uppercase tracking-wide text-ink-400">Einstellungen</p>
           <div className="flex flex-wrap items-center gap-2">
             <LiveSwitch langesLabel />
-            <LanguageSwitch />
           </div>
           <p className="mb-1 mt-4 px-1 text-xs font-medium uppercase tracking-wide text-ink-400">Team</p>
           <PraesenzListe />
@@ -166,15 +139,6 @@ export default function Layout() {
           <NavItem to="/profil" icon={<UserCircle size={18} />} label="Mein Profil" />
         </nav>
 
-        <div className="border-t border-ink-100 p-3">
-          <button
-            onClick={handleReset}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-ink-500 hover:bg-ink-50"
-          >
-            <RotateCcw size={16} />
-            Beispieldaten zurücksetzen
-          </button>
-        </div>
       </aside>
 
       {/* Main column */}
@@ -189,18 +153,12 @@ export default function Layout() {
             <Menu size={20} />
           </button>
 
-          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-lg bg-ink-50 px-3 py-1.5 text-sm text-ink-500">
-            <Megaphone size={16} className="shrink-0 text-brand-500" />
-            <span key={tickerIndex} className="truncate">
-              {NEWS_TICKER[tickerIndex]}
-            </span>
-          </div>
+          <div className="min-w-0 flex-1" />
 
           <div className="flex shrink-0 items-center gap-1 lg:gap-1.5">
             <div className="hidden items-center gap-1.5 lg:flex">
               <LiveSwitch />
               <PraesenzMenu />
-              <LanguageSwitch />
             </div>
 
             <button
@@ -216,13 +174,8 @@ export default function Layout() {
               )}
             </button>
 
-            <button onClick={() => navigate('/nachrichten')} title="Postfach" className="relative rounded-lg p-2 text-ink-500 hover:bg-ink-100">
+            <button onClick={() => navigate('/nachrichten')} title="Nachrichten" className="relative rounded-lg p-2 text-ink-500 hover:bg-ink-100">
               <Mail size={19} />
-              {unreadMessages > 0 && (
-                <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
-                  {unreadMessages}
-                </span>
-              )}
             </button>
 
             <div className="relative" ref={notifRef}>
@@ -232,45 +185,11 @@ export default function Layout() {
                 className="relative rounded-lg p-2 text-ink-500 hover:bg-ink-100"
               >
                 <Bell size={19} />
-                {unreadNotifs > 0 && (
-                  <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
-                    {unreadNotifs}
-                  </span>
-                )}
               </button>
               {notifOpen && (
                 <div className="absolute right-0 z-40 mt-2 w-[85vw] max-w-xs rounded-xl border border-ink-100 bg-white p-2 shadow-lg">
-                  <div className="flex items-center justify-between px-2 py-1">
-                    <p className="text-sm font-semibold text-ink-800">
-                      Benachrichtigungen <span className="text-xs font-normal text-amber-600">(Beispieldaten)</span>
-                    </p>
-                    <button
-                      onClick={() => dispatch({ type: 'MARK_ALL_NOTIFICATIONS_READ' })}
-                      className="text-xs font-medium text-brand-600 hover:underline"
-                    >
-                      Alle als gelesen markieren
-                    </button>
-                  </div>
-                  <div className="mt-1 max-h-80 overflow-y-auto">
-                    {state.benachrichtigungen.length === 0 && <p className="p-3 text-sm text-ink-400">Keine Benachrichtigungen</p>}
-                    {[...state.benachrichtigungen]
-                      .sort((a, b) => new Date(b.datum).getTime() - new Date(a.datum).getTime())
-                      .map((n) => (
-                        <button
-                          key={n.id}
-                          onClick={() => dispatch({ type: 'MARK_NOTIFICATION_READ', id: n.id })}
-                          className={`block w-full rounded-lg px-2 py-2 text-left text-sm hover:bg-ink-50 ${!n.gelesen ? 'bg-brand-50/60' : ''}`}
-                        >
-                          <span className="flex items-start gap-2">
-                            {!n.gelesen && <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" />}
-                            <span>
-                              <span className="block text-ink-700">{n.text}</span>
-                              <span className="text-xs text-ink-400">{formatDateTime(n.datum)}</span>
-                            </span>
-                          </span>
-                        </button>
-                      ))}
-                  </div>
+                  <p className="px-2 py-1 text-sm font-semibold text-ink-800">Benachrichtigungen</p>
+                  <p className="p-3 text-sm text-ink-400">Keine Benachrichtigungen</p>
                 </div>
               )}
             </div>
@@ -345,25 +264,5 @@ function NavItem({ to, icon, label, end }: { to: string; icon: ReactNode; label:
       {icon}
       {label}
     </NavLink>
-  )
-}
-
-function LanguageSwitch() {
-  const { state, dispatch } = useApp()
-  return (
-    <div className="flex items-center overflow-hidden rounded-lg border border-ink-200 text-xs font-semibold">
-      <button
-        onClick={() => dispatch({ type: 'SET_SPRACHE', sprache: 'de' })}
-        className={`px-2 py-1.5 ${state.sprache === 'de' ? 'bg-brand-600 text-white' : 'bg-white text-ink-500 hover:bg-ink-50'}`}
-      >
-        DE
-      </button>
-      <button
-        onClick={() => dispatch({ type: 'SET_SPRACHE', sprache: 'en' })}
-        className={`px-2 py-1.5 ${state.sprache === 'en' ? 'bg-brand-600 text-white' : 'bg-white text-ink-500 hover:bg-ink-50'}`}
-      >
-        EN
-      </button>
-    </div>
   )
 }

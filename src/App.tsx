@@ -1,5 +1,4 @@
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { AppProvider } from './context/AppContext'
 import { AuthProvider } from './context/AuthContext'
 import { LeadsProvider } from './context/LeadsContext'
 import { TeamProvider } from './context/TeamContext'
@@ -26,7 +25,6 @@ export default function App() {
   return (
     <ToastProvider>
       <AuthProvider>
-        <AppProvider>
           <HashRouter>
             <AuthGate>
               <TeamProvider>
@@ -55,7 +53,6 @@ export default function App() {
               </TeamProvider>
             </AuthGate>
           </HashRouter>
-        </AppProvider>
       </AuthProvider>
     </ToastProvider>
   )

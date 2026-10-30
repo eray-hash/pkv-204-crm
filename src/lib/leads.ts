@@ -1,5 +1,5 @@
 // Reine Logik fuer die echten Leads aus der Datenbank (ohne React/Supabase-Abhaengigkeiten, damit per
-// `node --test` pruefbar). Die Beispieldaten des Mockups nutzen weiterhin die Typen aus ../types.
+// `node --test` pruefbar).
 
 export type DbLeadStatus =
   | 'neu'
@@ -39,7 +39,7 @@ export const LOST_STATUS: DbLeadStatus[] = ['verloren', 'verstorben', 'nicht_meh
 /** Status, mit denen ein Lead endgueltig abgeschlossen wird (er wird nie wieder angerufen). */
 export const CLOSING_STATUS: DbLeadStatus[] = ['kein_interesse', 'verstorben', 'nicht_mehr_pkv', 'schon_umgestellt', 'verloren']
 
-/** Schritte der Bearbeitungs-Pipeline (ohne den frueheren Mockup-Status "Antrag", den es in der DB nicht gibt). */
+/** Schritte der Bearbeitungs-Pipeline. */
 export const PIPELINE_STATUS: DbLeadStatus[] = ['neu', 'kontaktiert', 'nicht_erreicht', 'termin_vereinbart', 'beratung', 'gewonnen']
 
 export const ALT_NACH_TAGEN = 60
@@ -304,4 +304,26 @@ export function verteilungsFehler(err: { code?: string | null; message?: string 
   }
   if (code === '42501' || msg.includes('geschaeftsfuehrer')) return 'Nur der Geschäftsführer darf Leads zuweisen.'
   return 'Die Aktion konnte nicht ausgeführt werden. Bitte später erneut versuchen.'
+}
+
+export interface Wiedervorlage {
+  lead: DbLead
+  faellig: string
+  ueberfaellig: boolean
+}
+
+/**
+ * Wiedervorlagen eines Nutzers: eigene, noch offene Leads mit gesetztem "naechster_anruf_ab" (Spaetter/Nicht erreicht).
+ * Sortiert nach Faelligkeit, aelteste zuerst.
+ */
+export function wiedervorlagenFuer(leads: DbLead[], userId: string | null, now: Date = new Date()): Wiedervorlage[] {
+  if (!userId) return []
+  const liste: Wiedervorlage[] = []
+  for (const lead of leads) {
+    if (lead.zugewiesen_an !== userId || lead.ist_test || !isOpenStatus(lead.status) || !lead.naechster_anruf_ab) continue
+    const t = Date.parse(lead.naechster_anruf_ab)
+    if (Number.isNaN(t)) continue
+    liste.push({ lead, faellig: lead.naechster_anruf_ab, ueberfaellig: t < now.getTime() })
+  }
+  return liste.sort((a, b) => Date.parse(a.faellig) - Date.parse(b.faellig))
 }

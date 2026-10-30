@@ -1,18 +1,19 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useApp } from '../context/AppContext'
+import { Link } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
 import { useLeads } from '../context/LeadsContext'
-import { Card, ErrorBlock, ExampleNotice, KpiTile, LoadingBlock, SectionHeader, inputClass } from '../components/ui'
+import { Card, EmptyState, ErrorBlock, KpiTile, LoadingBlock, SectionHeader, inputClass } from '../components/ui'
 import { formatDateTime, formatEuroExact, zeitraumToRange, ZEITRAUM_LABELS } from '../lib/utils'
-import { beitragSumme, countByStatus, imBereich, statusLabel, type DbLeadStatus } from '../lib/leads'
+import { beitragSumme, countByStatus, imBereich, statusLabel, wiedervorlagenFuer, type DbLeadStatus } from '../lib/leads'
 import type { ZeitraumFilter } from '../types'
-import { PhoneCall, TrendingUp, Users2, Trophy } from 'lucide-react'
+import { PhoneCall, TrendingUp, Users2, Trophy, CalendarClock } from 'lucide-react'
 
 const FILTERS: ZeitraumFilter[] = ['heute', 'gestern', 'letzte7', 'letzte14', 'letzte30', 'diesermonat', 'letztermonat', 'alle']
 const PIPELINE: DbLeadStatus[] = ['neu', 'kontaktiert', 'nicht_erreicht', 'termin_vereinbart', 'beratung']
 
 export default function Dashboard() {
-  const { state } = useApp()
+  const { profile } = useAuth()
   const { leads, queue, loading, error, reload } = useLeads()
   const navigate = useNavigate()
   const [filter, setFilter] = useState<ZeitraumFilter>('letzte30')
@@ -29,10 +30,8 @@ export default function Dashboard() {
   const termine = useMemo(() => leads.filter((l) => l.status === 'termin_vereinbart' && imBereich(l.updated_at, range)), [leads, range])
   const counts = useMemo(() => countByStatus(leads), [leads])
 
-  const anstehendeTermine = [...state.termine]
-    .filter((t) => new Date(t.datum).getTime() >= Date.now() - 1000 * 60 * 60)
-    .sort((a, b) => new Date(a.datum).getTime() - new Date(b.datum).getTime())
-    .slice(0, 5)
+  const wiedervorlagen = useMemo(() => wiedervorlagenFuer(leads, profile?.id ?? null), [leads, profile?.id])
+  const ueberfaellige = wiedervorlagen.filter((w) => w.ueberfaellig)
 
   return (
     <div>
@@ -120,25 +119,30 @@ export default function Dashboard() {
               </div>
 
               <div className="mt-5 flex items-center gap-2">
+                <CalendarClock size={18} className="text-brand-500" />
+                <h2 className="font-semibold text-ink-800">Überfällige Wiedervorlagen</h2>
+                <Link to="/wiedervorlagen" className="ml-auto text-xs font-medium text-brand-700 hover:underline">
+                  Alle ansehen
+                </Link>
+              </div>
+              <div className="mt-2 divide-y divide-ink-50">
+                {ueberfaellige.length === 0 && <p className="py-3 text-sm text-ink-400">Keine überfälligen Wiedervorlagen.</p>}
+                {ueberfaellige.slice(0, 5).map(({ lead, faellig }) => (
+                  <div key={lead.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm">
+                    <Link to={`/leads/${lead.id}`} className="font-medium text-ink-800 hover:text-brand-700 hover:underline">
+                      {lead.name}
+                    </Link>
+                    <p className="text-red-600">{formatDateTime(faellig)}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-5 flex items-center gap-2">
                 <Users2 size={18} className="text-brand-500" />
                 <h2 className="font-semibold text-ink-800">Nächste Termine</h2>
               </div>
-              <div className="mt-1">
-                <ExampleNotice text="Beispieldaten – der Kalender ist noch nicht mit der Datenbank verbunden." />
-              </div>
-              <div className="divide-y divide-ink-50">
-                {anstehendeTermine.length === 0 && <p className="py-3 text-sm text-ink-400">Keine anstehenden Termine.</p>}
-                {anstehendeTermine.map((t) => (
-                  <div key={t.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm">
-                    <div>
-                      <p className="font-medium text-ink-800">{t.leadName}</p>
-                      <p className="text-xs text-ink-400">
-                        {t.typ} · {t.format}
-                      </p>
-                    </div>
-                    <p className="text-ink-500">{formatDateTime(t.datum)}</p>
-                  </div>
-                ))}
+              <div className="mt-2">
+                <EmptyState text="Noch keine Termine. Der Kalender ist noch nicht angebunden." />
               </div>
             </Card>
 

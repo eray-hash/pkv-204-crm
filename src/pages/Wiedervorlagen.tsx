@@ -1,68 +1,64 @@
-import { useMemo } from 'react'
-import { useApp } from '../context/AppContext'
-import { SectionHeader, Card, KpiTile, StatusBadge, Badge, ExampleNotice } from '../components/ui'
+import { Link } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
+import { SectionHeader, Card, KpiTile, Badge, EmptyState } from '../components/ui'
+import LeadsGate from '../components/LeadsGate'
+import { DbStatusBadge } from '../components/LeadTable'
 import { formatDateTime } from '../lib/utils'
+import { wiedervorlagenFuer } from '../lib/leads'
 import { AlertTriangle, Phone, Mail } from 'lucide-react'
 
 export default function Wiedervorlagen() {
-  const { state } = useApp()
-
-  const wiedervorlagen = useMemo(
-    () =>
-      state.beispielLeads
-        .filter((l) => l.wiedervorlage)
-        .map((l) => ({ lead: l, ueberfaellig: new Date(l.wiedervorlage!.datum).getTime() < Date.now() }))
-        .sort((a, b) => new Date(a.lead.wiedervorlage!.datum).getTime() - new Date(b.lead.wiedervorlage!.datum).getTime()),
-    [state.beispielLeads],
-  )
-
-  const ueberfaelligCount = wiedervorlagen.filter((w) => w.ueberfaellig).length
+  const { profile } = useAuth()
 
   return (
     <div>
-      <SectionHeader title="Wiedervorlagen" subtitle="Leads und Kunden mit vereinbartem Rückruf- oder Nachfasstermin" />
-      <ExampleNotice />
-
-      <div className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <KpiTile label="Wiedervorlagen gesamt" value={String(wiedervorlagen.length)} />
-        <KpiTile label="Überfällig" value={String(ueberfaelligCount)} accent="red" />
-        <KpiTile label="Anstehend" value={String(wiedervorlagen.length - ueberfaelligCount)} accent="brand" />
-      </div>
-
-      <div className="space-y-2.5">
-        {wiedervorlagen.length === 0 && <Card className="p-8 text-center text-sm text-ink-400">Keine Wiedervorlagen vorhanden.</Card>}
-        {wiedervorlagen.map(({ lead, ueberfaellig }) => (
-          <Card
-            key={lead.id}
-            className={`p-4 ${ueberfaellig ? 'border-red-200 bg-red-50/60' : ''}`}
-          >
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                {ueberfaellig && <AlertTriangle size={18} className="text-red-500" />}
-                <div>
-                  <p className="font-medium text-ink-800">{lead.name}</p>
-                  <p className="flex items-center gap-3 text-xs text-ink-400">
-                    <span className="flex items-center gap-1">
-                      <Phone size={12} /> {lead.telefon}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Mail size={12} /> {lead.email}
-                    </span>
-                  </p>
-                </div>
+      <SectionHeader title="Wiedervorlagen" subtitle="Ihre Leads mit vereinbartem Rückruf (nächster Anruf ab …)" />
+      <LeadsGate>
+        {(leads) => {
+          const liste = wiedervorlagenFuer(leads, profile?.id ?? null)
+          const ueberfaellig = liste.filter((w) => w.ueberfaellig).length
+          return (
+            <>
+              <div className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <KpiTile label="Wiedervorlagen gesamt" value={String(liste.length)} />
+                <KpiTile label="Überfällig" value={String(ueberfaellig)} accent="red" />
+                <KpiTile label="Anstehend" value={String(liste.length - ueberfaellig)} accent="brand" />
               </div>
-              <div className="flex items-center gap-3">
-                <StatusBadge status={lead.status} />
-                {ueberfaellig && <Badge tone="red">Überfällig</Badge>}
-                <div className="text-right">
-                  <p className={`text-sm font-medium ${ueberfaellig ? 'text-red-600' : 'text-ink-700'}`}>{formatDateTime(lead.wiedervorlage!.datum)}</p>
-                  <p className="text-xs text-ink-400">{lead.wiedervorlage!.notiz}</p>
-                </div>
+
+              <div className="space-y-2.5">
+                {liste.length === 0 && <EmptyState text="Noch keine Einträge." />}
+                {liste.map(({ lead, faellig, ueberfaellig: ue }) => (
+                  <Card key={lead.id} className={`p-4 ${ue ? 'border-red-200 bg-red-50/60' : ''}`}>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        {ue && <AlertTriangle size={18} className="text-red-500" />}
+                        <div>
+                          <Link to={`/leads/${lead.id}`} className="font-medium text-ink-800 hover:text-brand-700 hover:underline">
+                            {lead.name}
+                          </Link>
+                          <p className="flex flex-wrap items-center gap-x-3 text-xs text-ink-400">
+                            <span className="flex items-center gap-1">
+                              <Phone size={12} /> {lead.telefon}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Mail size={12} /> {lead.email}
+                            </span>
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <DbStatusBadge status={lead.status} />
+                        {ue && <Badge tone="red">Überfällig</Badge>}
+                        <p className={`text-sm font-medium ${ue ? 'text-red-600' : 'text-ink-700'}`}>{formatDateTime(faellig)}</p>
+                      </div>
+                    </div>
+                  </Card>
+                ))}
               </div>
-            </div>
-          </Card>
-        ))}
-      </div>
+            </>
+          )
+        }}
+      </LeadsGate>
     </div>
   )
 }

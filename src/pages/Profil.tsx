@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { SectionHeader, Tabs, ExampleNotice } from '../components/ui'
+import { SectionHeader, Tabs } from '../components/ui'
 import Profildaten from './profil/Profildaten'
 import KalenderEinstellungen from './profil/KalenderEinstellungen'
 import SalesProvision from './profil/SalesProvision'
@@ -14,8 +14,7 @@ export default function Profil() {
 
   return (
     <div>
-      <SectionHeader title="Mein Profil" subtitle="Profildaten, Kalendereinstellungen und Provisionsübersichten" />
-      {tab !== 'telefonie' && tab !== 'erreichbarkeit' && <ExampleNotice text="Beispieldaten – Profildetails, Kalender und Provisionen sind noch nicht mit der Datenbank verbunden. Name und Rolle stammen aus Ihrem Konto." />}
+      <SectionHeader title="Mein Profil" subtitle="Konto, Erreichbarkeit und Telefonie" />
 
       <div className="mb-5">
         <Tabs

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
-import { X, MoveHorizontal, FlaskConical, Loader2, AlertCircle } from 'lucide-react'
+import { LEER_TEXT, NICHT_ANGEBUNDEN_TEXT } from '../lib/texte'
+import { X, MoveHorizontal, Info, Loader2, AlertCircle } from 'lucide-react'
 
 export function Card({
   children,
@@ -121,19 +122,6 @@ export function Badge({
   return <span className={`inline-flex items-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ${tones[tone]} ${className}`}>{children}</span>
 }
 
-export function StatusBadge({ status }: { status: string }) {
-  const tone: Record<string, 'ink' | 'brand' | 'red' | 'amber' | 'green'> = {
-    Neu: 'ink',
-    Kontaktiert: 'brand',
-    'Termin vereinbart': 'amber',
-    Beratung: 'amber',
-    Antrag: 'brand',
-    Gewonnen: 'green',
-    Verloren: 'red',
-  }
-  return <Badge tone={tone[status] ?? 'ink'}>{status}</Badge>
-}
-
 export function Modal({
   open,
   onClose,
@@ -216,13 +204,23 @@ export function EmptyState({ text }: { text: string }) {
   return <div className="rounded-xl border border-dashed border-ink-200 p-8 text-center text-sm text-ink-400">{text}</div>
 }
 
-/** Dezenter Hinweis auf Seiten, die noch Beispieldaten statt Datenbank-Daten zeigen. */
-export function ExampleNotice({ text = 'Beispieldaten – dieser Bereich ist noch nicht mit der Datenbank verbunden.' }: { text?: string }) {
+/** Ruhiger Hinweis oben auf Seiten, für die es noch kein Backend gibt. */
+export function NichtAngebunden({ text = NICHT_ANGEBUNDEN_TEXT }: { text?: string }) {
   return (
-    <div className="mb-4 inline-flex max-w-full items-center gap-1.5 rounded-lg bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700">
-      <FlaskConical size={13} className="shrink-0" />
+    <div role="note" className="mb-4 flex max-w-full items-start gap-2 rounded-lg border border-ink-100 bg-white px-3 py-2 text-sm text-ink-500">
+      <Info size={15} className="mt-0.5 shrink-0 text-ink-400" />
       <span>{text}</span>
     </div>
+  )
+}
+
+/** Seite ohne Backend: Hinweis plus ehrlicher Leer-Zustand. */
+export function NichtAngebundenSeite({ leerText = LEER_TEXT }: { leerText?: string }) {
+  return (
+    <>
+      <NichtAngebunden />
+      <EmptyState text={leerText} />
+    </>
   )
 }
 
