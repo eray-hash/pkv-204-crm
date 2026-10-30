@@ -2,16 +2,11 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import type { Session } from '@supabase/supabase-js'
 import { supabase, supabaseKonfiguriert } from '../lib/supabase'
 import { mapAuthError } from '../lib/authErrors'
+import { fetchProfil, updateErreichbarkeit, type ErreichbarkeitPatch } from '../lib/profilesApi'
+import type { Profile, Rolle } from '../lib/profil'
+import { setAnzeigeZeitzone } from '../lib/zeit'
 
-export type Rolle = 'mitarbeiter' | 'geschaeftsfuehrer'
-
-export interface Profile {
-  id: string
-  name: string
-  rolle: Rolle
-  telefon_festnetz: string | null
-  telefon_mobil: string | null
-}
+export type { Rolle, Profile }
 
 interface AuthContextValue {
   session: Session | null
@@ -26,23 +21,11 @@ interface AuthContextValue {
   signOut: () => Promise<void>
   sendPasswordReset: (email: string) => Promise<string | null>
   updatePassword: (password: string) => Promise<string | null>
+  /** Speichert Zeitzone/Erreichbarkeit des eigenen Profils. Gibt eine Fehlermeldung oder null zurueck. */
+  updateProfil: (patch: ErreichbarkeitPatch) => Promise<string | null>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
-
-function parseProfile(row: unknown): Profile | null {
-  if (!row || typeof row !== 'object') return null
-  const r = row as Record<string, unknown>
-  if (typeof r.id !== 'string') return null
-  const rolle: Rolle = r.rolle === 'geschaeftsfuehrer' ? 'geschaeftsfuehrer' : 'mitarbeiter'
-  return {
-    id: r.id,
-    name: typeof r.name === 'string' && r.name ? r.name : 'Unbekannt',
-    rolle,
-    telefon_festnetz: typeof r.telefon_festnetz === 'string' ? r.telefon_festnetz : null,
-    telefon_mobil: typeof r.telefon_mobil === 'string' ? r.telefon_mobil : null,
-  }
-}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
@@ -90,26 +73,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let aktiv = true
     setProfile(null)
     setProfileError(null)
-    supabase
-      .from('profiles')
-      .select('id, name, rolle, telefon_festnetz, telefon_mobil')
-      .eq('id', userId)
-      .maybeSingle()
-      .then(({ data, error }) => {
-        if (!aktiv) return
-        if (error) {
-          setProfile(null)
-          setProfileError('Das Profil konnte nicht geladen werden. Bitte später erneut versuchen.')
-        } else {
-          const p = parseProfile(data)
-          setProfile(p)
-          if (!p) setProfileError('Für dieses Konto ist noch kein Profil angelegt. Bitte beim Administrator melden.')
-        }
-      })
+    void fetchProfil(userId).then((res) => {
+      if (!aktiv) return
+      if (res.error) {
+        setProfile(null)
+        setProfileError(`${res.error} Bitte später erneut versuchen.`)
+      } else {
+        setProfile(res.data)
+        if (!res.data) setProfileError('Für dieses Konto ist noch kein Profil angelegt. Bitte beim Administrator melden.')
+      }
+    })
     return () => {
       aktiv = false
     }
   }, [userId])
+
+  // Alle Zeitstempel werden in der Zeitzone des eingeloggten Nutzers angezeigt (sonst Browser-Zeitzone).
+  const zeitzone = profile?.zeitzone ?? null
+  useEffect(() => {
+    setAnzeigeZeitzone(zeitzone)
+  }, [zeitzone])
+
+  const updateProfil = useCallback(
+    async (patch: ErreichbarkeitPatch) => {
+      if (!userId) return 'Bitte erneut anmelden.'
+      const res = await updateErreichbarkeit(userId, patch)
+      if (res.error || !res.data) return res.error ?? 'Die Einstellungen konnten nicht gespeichert werden.'
+      setProfile(res.data)
+      return null
+    },
+    [userId],
+  )
 
   const signIn = useCallback(async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
@@ -147,8 +141,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signOut,
       sendPasswordReset,
       updatePassword,
+      updateProfil,
     }),
-    [session, profile, sessionChecked, userId, profileError, recovery, signIn, signOut, sendPasswordReset, updatePassword],
+    [session, profile, sessionChecked, userId, profileError, recovery, signIn, signOut, sendPasswordReset, updatePassword, updateProfil],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

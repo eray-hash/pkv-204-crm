@@ -1,4 +1,5 @@
 import type { ZeitraumFilter } from '../types'
+import { getAnzeigeZeitzone } from './zeit'
 
 export function uid(prefix = 'id'): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 9)}-${Date.now().toString(36).slice(-4)}`
@@ -12,19 +13,27 @@ export function formatEuroExact(value: number): string {
   return new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(value)
 }
 
+// Alle Zeitstempel erscheinen in der Zeitzone des eingeloggten Nutzers (siehe setAnzeigeZeitzone in zeit.ts).
 export function formatDate(iso: string): string {
   const d = new Date(iso)
-  return new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(d)
+  return new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: getAnzeigeZeitzone() }).format(d)
 }
 
 export function formatDateTime(iso: string): string {
   const d = new Date(iso)
-  return new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(d)
+  return new Intl.DateTimeFormat('de-DE', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: getAnzeigeZeitzone(),
+  }).format(d)
 }
 
 export function formatTime(iso: string): string {
   const d = new Date(iso)
-  return new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' }).format(d)
+  return new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: getAnzeigeZeitzone() }).format(d)
 }
 
 export function isoDaysAgo(days: number, hour = 9, minute = 0): string {

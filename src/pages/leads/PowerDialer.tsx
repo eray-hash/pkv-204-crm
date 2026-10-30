@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { CalendarCheck, Clock3, Info, Loader2, PartyPopper, Phone, PhoneOff, RefreshCw, Smartphone, ThumbsDown } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useLeads } from '../../context/LeadsContext'
 import { useToast } from '../../components/ToastContext'
+import NummerKopieren from '../../components/NummerKopieren'
 import { Badge, Button, Card, ErrorBlock, LoadingBlock, SectionHeader, inputClass } from '../../components/ui'
 import { addNotiz, fetchNotizen, logAnruf, type Notiz } from '../../lib/leadsApi'
 import { anrufenSipgate, telefonieStatus as ladeTelefonieStatus } from '../../lib/telefonieApi'
@@ -17,6 +18,7 @@ import {
   type DialerErgebnis,
 } from '../../lib/leads'
 import { formatDateTime, formatEuroExact } from '../../lib/utils'
+import { eingabeZeitzone, lokalZuIso, morgenFrueh } from '../../lib/zeit'
 
 const ABSCHLUSS_TEXT: Partial<Record<DialerErgebnis, string>> = {
   kein_interesse: 'Kein Interesse',
@@ -25,21 +27,10 @@ const ABSCHLUSS_TEXT: Partial<Record<DialerErgebnis, string>> = {
   schon_umgestellt: 'Schon umgestellt',
 }
 
-function lokalesDatumsfeld(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
-}
-
-function morgenFrueh(): string {
-  const d = new Date()
-  d.setDate(d.getDate() + 1)
-  d.setHours(9, 0, 0, 0)
-  return lokalesDatumsfeld(d)
-}
-
 export default function PowerDialer() {
   const { session } = useAuth()
-  const { queue, loading, queueError, reload, updateLead } = useLeads()
+  const { leads, queue, loading, queueError, reload, updateLead, uebernehmen, refreshLead } = useLeads()
+  const meId = session?.user.id ?? null
   const { showToast } = useToast()
   const navigate = useNavigate()
 
@@ -57,7 +48,7 @@ export default function PowerDialer() {
   const [mobilFehler, setMobilFehler] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [spaeterOffen, setSpaeterOffen] = useState(false)
-  const [spaeterWert, setSpaeterWert] = useState(morgenFrueh)
+  const [spaeterWert, setSpaeterWert] = useState(() => morgenFrueh(new Date(), eingabeZeitzone()))
   const [bestaetige, setBestaetige] = useState<DialerErgebnis | null>(null)
 
   useEffect(() => {
@@ -75,8 +66,28 @@ export default function PowerDialer() {
     }
   }, [])
 
-  const aktuell = liste?.[index] ?? null
+  // Aktueller Stand der Zuweisung: aus der (live aktualisierten) Lead-Liste, sonst aus dem eingefrorenen Stand
+  const frischer = useCallback((l: DbLead): DbLead => leads.find((x) => x.id === l.id) ?? l, [leads])
+  const istFremd = useCallback(
+    (l: DbLead) => {
+      const a = frischer(l).zugewiesen_an
+      return a !== null && a !== meId
+    },
+    [frischer, meId],
+  )
+
+  // Inzwischen von jemand anderem uebernommene Leads werden sauber uebersprungen (die Liste springt sonst nicht um)
+  const aktuellIndex = useMemo(() => {
+    if (!liste) return 0
+    let i = index
+    while (i < liste.length && istFremd(liste[i])) i++
+    return i
+  }, [liste, index, istFremd])
+  const uebersprungen = useMemo(() => (liste ? liste.slice(index, aktuellIndex) : []), [liste, index, aktuellIndex])
+
+  const aktuell = liste && aktuellIndex < liste.length ? frischer(liste[aktuellIndex]) : null
   const aktuellId = aktuell?.id ?? null
+  const aktuellFrei = aktuell !== null && aktuell.zugewiesen_an === null
 
   // Notizen des aktuellen Leads laden und Eingabefelder zuruecksetzen
   useEffect(() => {
@@ -96,17 +107,38 @@ export default function PowerDialer() {
     }
   }, [aktuellId])
 
-  const neuVerfuegbar = useMemo(() => {
-    if (!liste) return 0
+  // Neue Leads seit dem Start der Runde (live per Realtime): freie zuerst, neueste zuerst
+  const neueLeads = useMemo(() => {
+    if (!liste) return []
     const ids = new Set(liste.map((l) => l.id))
-    return queue.filter((l) => !ids.has(l.id) && !bearbeitet.has(l.id)).length
+    return queue.filter((l) => !ids.has(l.id) && !bearbeitet.has(l.id))
   }, [liste, queue, bearbeitet])
+  const neuVerfuegbar = neueLeads.length
 
   const neuLaden = useCallback(() => {
     setListe(queue)
     setIndex(0)
     setBearbeitet(new Set())
   }, [queue])
+
+  // Freien Lead uebernehmen (atomar). Gibt true zurueck, wenn der Lead jetzt mir gehoert.
+  async function sichereUebernahme(lead: DbLead, still = false): Promise<boolean> {
+    if (lead.zugewiesen_an === meId) return true
+    const res = await uebernehmen(lead.id)
+    if (res.fehler) {
+      showToast(res.fehler, 'info')
+      return false
+    }
+    if (res.ok) {
+      if (!still) showToast(`${lead.name} übernommen`)
+      return true
+    }
+    // ok=false: entweder schon vergeben oder (selten) schon mein Lead
+    const neu = await refreshLead(lead.id)
+    if (neu && neu.zugewiesen_an === meId) return true
+    showToast('Dieser Lead wurde inzwischen von jemand anderem übernommen.', 'info')
+    return false
+  }
 
   async function anrufen(kanal: AnrufKanal) {
     if (!aktuell || !session) return
@@ -115,7 +147,22 @@ export default function PowerDialer() {
     else setAngerufen({ kanal, zeit: new Date().toISOString() })
   }
 
-  // Mobil (Satellite) ueber sipgate: Es wird nur die Lead-ID gesendet; die Funktion laedt die Nummer selbst und protokolliert den Anruf.
+  // tel:-Link: Ein freier Lead wird VOR dem Waehlen uebernommen (Navigation erst danach), eigene Leads wie bisher direkt.
+  async function telKlick(e: MouseEvent<HTMLAnchorElement>, kanal: AnrufKanal) {
+    if (!aktuell) return
+    if (aktuellFrei) {
+      e.preventDefault()
+      const href = e.currentTarget.href
+      if (!(await sichereUebernahme(aktuell, true))) return
+      await anrufen(kanal)
+      window.location.href = href
+      return
+    }
+    void anrufen(kanal)
+  }
+
+  // Mobil (Satellite) ueber sipgate: Es wird nur die Lead-ID gesendet; die Funktion laedt die Nummer selbst, uebernimmt einen freien Lead
+  // vor dem Anruf und protokolliert den Anruf.
   async function mobilUeberSipgate() {
     if (!aktuell || mobilBusy) return
     setMobilBusy(true)
@@ -124,7 +171,10 @@ export default function PowerDialer() {
     const res = await anrufenSipgate(aktuell.id)
     setMobilBusy(false)
     if (res.error) {
-      if (sollAufTelFallen(res.code)) {
+      if (res.code === 'lead_vergeben') {
+        showToast(res.error, 'info')
+        void refreshLead(aktuell.id)
+      } else if (sollAufTelFallen(res.code)) {
         setTelefonie('nicht_verbunden')
         showToast('Telefonie nicht verbunden (Mein Profil → Telefonie). „Mobil“ nutzt jetzt die Telefon-Anwendung.', 'info')
       } else {
@@ -134,6 +184,27 @@ export default function PowerDialer() {
     }
     setAngerufen({ kanal: 'mobil', zeit: new Date().toISOString(), sipgate: true })
     showToast('Dein Telefon klingelt gleich.')
+    if (aktuellFrei) void refreshLead(aktuell.id) // der Lead gehoert jetzt mir
+  }
+
+  async function neuenLeadUebernehmen(lead: DbLead) {
+    const res = await uebernehmen(lead.id)
+    if (res.fehler) {
+      showToast(res.fehler, 'info')
+      return
+    }
+    if (!res.ok) {
+      showToast('Dieser Lead wurde bereits von jemand anderem übernommen.', 'info')
+      return
+    }
+    showToast(`${lead.name} übernommen – er steht als nächster Lead bereit`)
+    // direkt nach dem aktuellen Lead einreihen
+    setListe((prev) => {
+      if (!prev || prev.some((l) => l.id === lead.id)) return prev
+      const kopie = [...prev]
+      kopie.splice(Math.min(aktuellIndex + 1, kopie.length), 0, lead)
+      return kopie
+    })
   }
 
   async function notizSpeichern(): Promise<boolean> {
@@ -170,6 +241,11 @@ export default function PowerDialer() {
       return
     }
     setBusy(true)
+    // Ein freier Lead wird zuerst uebernommen (Datenbankregel: nur eigene Leads duerfen geaendert werden)
+    if (aktuellFrei && !(await sichereUebernahme(aktuell, true))) {
+      setBusy(false)
+      return
+    }
     const notizOk = await notizSpeichern()
     if (!notizOk) {
       setBusy(false)
@@ -183,7 +259,7 @@ export default function PowerDialer() {
     }
     showToast(erfolgsText(e, aktuell.name))
     setBearbeitet((prev) => new Set(prev).add(aktuell.id))
-    setIndex((i) => i + 1)
+    setIndex(aktuellIndex + 1)
   }
 
   if (loading && liste === null) return <LoadingBlock text="Anrufliste wird geladen …" />
@@ -240,21 +316,50 @@ export default function PowerDialer() {
     <div>
       {kopf}
 
+      {uebersprungen.length > 0 && (
+        <p className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800" role="status">
+          Übersprungen (inzwischen von jemand anderem übernommen): {uebersprungen.map((l) => l.name).join(', ')}
+        </p>
+      )}
+
       {neuVerfuegbar > 0 && (
-        <button
-          onClick={neuLaden}
-          className="mb-4 flex w-full items-center justify-center gap-2 rounded-xl bg-brand-50 px-4 py-2.5 text-sm font-medium text-brand-700 hover:bg-brand-100"
-        >
-          <RefreshCw size={15} /> {neuVerfuegbar} neue{neuVerfuegbar === 1 ? 'r' : ''} Lead{neuVerfuegbar === 1 ? '' : 's'} verfügbar – Liste neu laden
-        </button>
+        <div className="mb-4 rounded-xl border border-brand-100 bg-brand-50/60 p-3" aria-live="polite">
+          <p className="mb-2 text-sm font-semibold text-brand-800">
+            {neuVerfuegbar} neue{neuVerfuegbar === 1 ? 'r' : ''} Lead{neuVerfuegbar === 1 ? '' : 's'} eingegangen
+          </p>
+          <ul className="space-y-2">
+            {neueLeads.slice(0, 5).map((l) => (
+              <li key={l.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm shadow-sm">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium text-ink-800">{l.name}</span>
+                  <span className="block text-xs text-ink-400">
+                    {l.gesellschaft} · {formatEuroExact(l.tarifbeitrag)} · {formatDateTime(l.eingang_zeit)}
+                  </span>
+                </span>
+                {l.zugewiesen_an === null ? (
+                  <>
+                    <Badge tone="green">Neu, frei</Badge>
+                    <Button onClick={() => void neuenLeadUebernehmen(l)}>Übernehmen</Button>
+                  </>
+                ) : (
+                  <Badge tone="brand">Meiner</Badge>
+                )}
+              </li>
+            ))}
+          </ul>
+          {neuVerfuegbar > 5 && <p className="mt-2 text-xs text-ink-500">… und {neuVerfuegbar - 5} weitere.</p>}
+          <button onClick={neuLaden} className="mt-2 flex items-center gap-1.5 text-sm font-medium text-brand-700 hover:underline">
+            <RefreshCw size={14} /> Liste mit allen neuen Leads neu laden
+          </button>
+        </div>
       )}
 
       <div className="mb-4 flex items-center gap-3">
         <div className="h-2 flex-1 overflow-hidden rounded-full bg-ink-100">
-          <div className="h-full rounded-full bg-brand-500 transition-all" style={{ width: `${((index + 1) / liste.length) * 100}%` }} />
+          <div className="h-full rounded-full bg-brand-500 transition-all" style={{ width: `${((aktuellIndex + 1) / liste.length) * 100}%` }} />
         </div>
         <span className="whitespace-nowrap text-sm font-medium text-ink-500">
-          Lead {index + 1} von {liste.length}
+          Lead {aktuellIndex + 1} von {liste.length}
         </span>
       </div>
 
@@ -263,6 +368,7 @@ export default function PowerDialer() {
           <Badge tone={aktuell.status === 'nicht_erreicht' ? 'amber' : aktuell.status === 'kontaktiert' ? 'brand' : 'ink'}>
             {aktuell.status === 'nicht_erreicht' ? 'Nicht erreicht' : aktuell.status === 'kontaktiert' ? 'Kontaktiert' : 'Neu'}
           </Badge>
+          {aktuellFrei ? <Badge tone="green">Neu, frei</Badge> : <Badge tone="brand">Mein Lead</Badge>}
           {aktuell.moegliches_duplikat_von && (
             <Link to={`/leads/${aktuell.moegliches_duplikat_von}`}>
               <Badge tone="amber">Mögliches Duplikat – ursprünglichen Lead öffnen</Badge>
@@ -274,7 +380,25 @@ export default function PowerDialer() {
             {aktuell.name}
           </Link>
         </h2>
-        <p className="mt-1 text-center text-ink-500">{aktuell.telefon}</p>
+        <p className="mt-1 flex flex-wrap items-center justify-center gap-2 text-ink-500">
+          {aktuell.telefon}
+          <NummerKopieren nummer={aktuell.telefon} />
+        </p>
+        {aktuellFrei && (
+          <div className="mt-3 flex justify-center">
+            <Button
+              variant="secondary"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true)
+                await sichereUebernahme(aktuell)
+                setBusy(false)
+              }}
+            >
+              Übernehmen
+            </Button>
+          </div>
+        )}
         <p className="break-all text-center text-sm text-ink-400">{aktuell.email}</p>
 
         <div className="mt-5 grid grid-cols-2 gap-3 rounded-xl bg-ink-50 p-4 text-left text-sm">
@@ -303,7 +427,7 @@ export default function PowerDialer() {
         <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2">
           <a
             href={telHref(aktuell.telefon)}
-            onClick={() => void anrufen('festnetz')}
+            onClick={(e) => void telKlick(e, 'festnetz')}
             className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-600 px-3.5 py-3 text-sm font-medium text-white shadow-sm hover:bg-brand-700"
           >
             <Phone size={17} /> Festnetz (Webex)
@@ -311,7 +435,7 @@ export default function PowerDialer() {
           {telefonie === 'nicht_verbunden' ? (
             <a
               href={telHref(aktuell.telefon)}
-              onClick={() => void anrufen('mobil')}
+              onClick={(e) => void telKlick(e, 'mobil')}
               className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-600 px-3.5 py-3 text-sm font-medium text-white shadow-sm hover:bg-brand-700"
             >
               <Smartphone size={17} /> Mobil (Satellite)
@@ -347,7 +471,7 @@ export default function PowerDialer() {
         {mobilFehler && (
           <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
             {mobilFehler}{' '}
-            <a href={telHref(aktuell.telefon)} onClick={() => void anrufen('mobil')} className="font-medium underline">
+            <a href={telHref(aktuell.telefon)} onClick={(e) => void telKlick(e, 'mobil')} className="font-medium underline">
               Stattdessen mit der Telefon-Anwendung anrufen
             </a>
           </p>
@@ -433,7 +557,7 @@ export default function PowerDialer() {
                 <Button variant="ghost" onClick={() => setSpaeterOffen(false)}>
                   Abbrechen
                 </Button>
-                <Button disabled={busy || !spaeterWert} onClick={() => void ergebnis('spaeter', spaeterWert)}>
+                <Button disabled={busy || !spaeterWert} onClick={() => void ergebnis('spaeter', lokalZuIso(spaeterWert, eingabeZeitzone()) ?? undefined)}>
                   Später speichern
                 </Button>
               </div>

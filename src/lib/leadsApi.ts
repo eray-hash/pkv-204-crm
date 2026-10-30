@@ -1,13 +1,17 @@
 // Zugriff auf die Supabase-Tabellen fuer Leads. Alle Funktionen werfen bei Fehlern keinen Fehler,
 // sondern liefern { error } mit einer deutschen Meldung (Details nur in der Konsole).
 import { supabase } from './supabase'
-import { mapLeadRow, mapLeadRows, sortNewestFirst, type AnrufKanal, type DbLead, type LeadPatch } from './leads'
+import { mapLeadRow, mapLeadRows, sortNewestFirst, verteilungsFehler, type AnrufKanal, type DbLead, type LeadPatch } from './leads'
+import { istFehlendeSpalte } from './profilesApi'
 
 const SEITE = 1000
 const MAX_SEITEN = 30
 
+// Basis-Spalten (immer vorhanden) und die mit der Verteilungs-Migration hinzugekommenen Spalten.
 const LEAD_SPALTEN =
   'id, name, telefon, email, gesellschaft, tarifbeitrag, quelle, eingang_zeit, status, ist_live, ist_test, moegliches_duplikat_von, zugewiesen_an, naechster_anruf_ab, created_at, updated_at'
+const LEAD_SPALTEN_ERWEITERT = `${LEAD_SPALTEN}, zugewiesen_von, uebernommen_am`
+let leadsErweitertVerfuegbar = true
 
 export interface Ergebnis<T> {
   data: T | null
@@ -24,12 +28,14 @@ export async function fetchLeads(): Promise<Ergebnis<DbLead[]>> {
   const alle: DbLead[] = []
   for (let seite = 0; seite < MAX_SEITEN; seite++) {
     const von = seite * SEITE
-    const { data, error } = await supabase
-      .from('leads')
-      .select(LEAD_SPALTEN)
-      .eq('ist_test', false)
-      .order('eingang_zeit', { ascending: false })
-      .range(von, von + SEITE - 1)
+    const abfrage = (spalten: string) =>
+      supabase.from('leads').select(spalten).eq('ist_test', false).order('eingang_zeit', { ascending: false }).range(von, von + SEITE - 1)
+    let { data, error } = await abfrage(leadsErweitertVerfuegbar ? LEAD_SPALTEN_ERWEITERT : LEAD_SPALTEN)
+    if (error && leadsErweitertVerfuegbar && istFehlendeSpalte(error)) {
+      // Migration noch nicht eingespielt: ohne die neuen Spalten weiterarbeiten
+      leadsErweitertVerfuegbar = false
+      ;({ data, error } = await abfrage(LEAD_SPALTEN))
+    }
     if (error) return fehler('Die Leads konnten nicht geladen werden.', error)
     alle.push(...mapLeadRows(data))
     if (!data || data.length < SEITE) break
@@ -55,19 +61,54 @@ export async function fetchQueue(): Promise<Ergebnis<DbLead[]>> {
 }
 
 export async function fetchLead(id: string): Promise<Ergebnis<DbLead | null>> {
-  const { data, error } = await supabase.from('leads').select(LEAD_SPALTEN).eq('id', id).maybeSingle()
+  const abfrage = (spalten: string) => supabase.from('leads').select(spalten).eq('id', id).maybeSingle()
+  let { data, error } = await abfrage(leadsErweitertVerfuegbar ? LEAD_SPALTEN_ERWEITERT : LEAD_SPALTEN)
+  if (error && leadsErweitertVerfuegbar && istFehlendeSpalte(error)) {
+    leadsErweitertVerfuegbar = false
+    ;({ data, error } = await abfrage(LEAD_SPALTEN))
+  }
   if (error) return fehler('Der Lead konnte nicht geladen werden.', error)
   const lead = mapLeadRow(data)
   return { data: lead && !lead.ist_test ? lead : null, error: null }
 }
 
 export async function updateLeadRow(id: string, patch: LeadPatch): Promise<Ergebnis<DbLead>> {
-  const { data, error } = await supabase.from('leads').update(patch).eq('id', id).select(LEAD_SPALTEN).maybeSingle()
+  const { data, error } = await supabase
+    .from('leads')
+    .update(patch)
+    .eq('id', id)
+    .select(leadsErweitertVerfuegbar ? LEAD_SPALTEN_ERWEITERT : LEAD_SPALTEN)
+    .maybeSingle()
   if (error) return fehler('Die Änderung konnte nicht gespeichert werden.', error)
   const lead = mapLeadRow(data)
-  if (!lead) return fehler('Die Änderung wurde nicht gespeichert (keine Berechtigung oder Lead nicht gefunden).', 'leer')
+  if (!lead) {
+    return fehler('Keine Berechtigung: Der Lead gehört jemand anderem oder ist noch frei (bitte zuerst übernehmen).', 'leer')
+  }
   return { data: lead, error: null }
 }
+
+// ---------- Lead-Verteilung (Datenbankfunktionen aus 20261030000000_verteilung.sql) ----------
+
+export interface VerteilungsErgebnis {
+  /** true = die Aktion hat den Lead tatsaechlich geaendert */
+  ok: boolean
+  /** Fehlermeldung bei technischen Problemen (nicht bei "bereits vergeben", das ist ok=false ohne Fehler) */
+  fehler: string | null
+}
+
+async function verteilungAufrufen(funktion: string, args: Record<string, string>): Promise<VerteilungsErgebnis> {
+  const { data, error } = await supabase.rpc(funktion, args)
+  if (error) {
+    console.error(`${funktion} fehlgeschlagen`, error)
+    return { ok: false, fehler: verteilungsFehler(error) }
+  }
+  return { ok: data === true, fehler: null }
+}
+
+/** Atomar: nur der erste Aufrufer bekommt den freien Lead (ok=false: schon vergeben oder nicht uebernehmbar). */
+export const rpcUebernehmen = (leadId: string) => verteilungAufrufen('lead_uebernehmen', { p_lead_id: leadId })
+export const rpcFreigeben = (leadId: string) => verteilungAufrufen('lead_freigeben', { p_lead_id: leadId })
+export const rpcZuweisen = (leadId: string, userId: string) => verteilungAufrufen('lead_zuweisen', { p_lead_id: leadId, p_user_id: userId })
 
 // ---------- Einwilligung, Notizen, Anrufe ----------
 

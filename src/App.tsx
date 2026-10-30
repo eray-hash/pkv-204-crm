@@ -2,6 +2,7 @@ import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AppProvider } from './context/AppContext'
 import { AuthProvider } from './context/AuthContext'
 import { LeadsProvider } from './context/LeadsContext'
+import { TeamProvider } from './context/TeamContext'
 import AuthGate from './components/AuthGate'
 import { ToastProvider } from './components/ToastContext'
 import Layout from './components/Layout'
@@ -28,6 +29,7 @@ export default function App() {
         <AppProvider>
           <HashRouter>
             <AuthGate>
+              <TeamProvider>
               <LeadsProvider>
                 <Routes>
                   <Route element={<Layout />}>
@@ -50,6 +52,7 @@ export default function App() {
                   </Route>
                 </Routes>
               </LeadsProvider>
+              </TeamProvider>
             </AuthGate>
           </HashRouter>
         </AppProvider>

@@ -59,6 +59,8 @@ export interface DbLead {
   ist_test: boolean
   moegliches_duplikat_von: string | null
   zugewiesen_an: string | null
+  zugewiesen_von: string | null
+  uebernommen_am: string | null
   naechster_anruf_ab: string | null
   created_at: string
   updated_at: string
@@ -151,6 +153,8 @@ export function mapLeadRow(row: unknown): DbLead | null {
     ist_test: r.ist_test === true,
     moegliches_duplikat_von: strOrNull(r.moegliches_duplikat_von),
     zugewiesen_an: strOrNull(r.zugewiesen_an),
+    zugewiesen_von: strOrNull(r.zugewiesen_von),
+    uebernommen_am: strOrNull(r.uebernommen_am),
     naechster_anruf_ab: strOrNull(r.naechster_anruf_ab),
     created_at: str(r.created_at),
     updated_at: str(r.updated_at),
@@ -244,4 +248,60 @@ export function imBereich(iso: string, bereich: ZeitBereich | null): boolean {
 
 export function beitragSumme(leads: DbLead[]): number {
   return leads.reduce((s, l) => s + l.tarifbeitrag, 0)
+}
+
+// ---------- Lead-Verteilung ----------
+
+/** Nur Leads mit diesen Status kann man uebernehmen (wie die Datenbankfunktion lead_uebernehmen). */
+export const UEBERNAHME_STATUS: DbLeadStatus[] = ['neu', 'kontaktiert', 'nicht_erreicht']
+
+export type Bearbeiter = 'frei' | 'ich' | 'andere'
+
+export interface LeadZugriff {
+  bearbeiter: Bearbeiter
+  /** frei zum Uebernehmen (Status passt, kein Testlead) */
+  darfUebernehmen: boolean
+  /** eigener Lead oder Geschaeftsfuehrer */
+  darfFreigeben: boolean
+  darfZuweisen: boolean
+  /** Status aendern, Notizen schreiben, anrufen: nicht, wenn der Lead einem anderen gehoert (Geschaeftsfuehrer ausgenommen) */
+  darfBearbeiten: boolean
+  /** Ein Mitarbeiter muss einen freien Lead zuerst uebernehmen, bevor er den Status aendern kann (Datenbankregel) */
+  uebernahmeVorBearbeitung: boolean
+}
+
+export function leadZugriff(lead: Pick<DbLead, 'zugewiesen_an' | 'status' | 'ist_test'>, meId: string | null, istGeschaeftsfuehrer: boolean): LeadZugriff {
+  const bearbeiter: Bearbeiter = lead.zugewiesen_an === null ? 'frei' : lead.zugewiesen_an === meId ? 'ich' : 'andere'
+  return {
+    bearbeiter,
+    darfUebernehmen: bearbeiter === 'frei' && !lead.ist_test && UEBERNAHME_STATUS.includes(lead.status),
+    darfFreigeben: bearbeiter !== 'frei' && (bearbeiter === 'ich' || istGeschaeftsfuehrer),
+    darfZuweisen: istGeschaeftsfuehrer,
+    darfBearbeiten: bearbeiter !== 'andere' || istGeschaeftsfuehrer,
+    uebernahmeVorBearbeitung: bearbeiter === 'frei' && !istGeschaeftsfuehrer,
+  }
+}
+
+export type ZuweisungsFilter = 'alle' | 'frei' | 'meine'
+
+export function filterZuweisung(leads: DbLead[], filter: ZuweisungsFilter, meId: string | null): DbLead[] {
+  if (filter === 'frei') return leads.filter((l) => l.zugewiesen_an === null)
+  if (filter === 'meine') return leads.filter((l) => meId !== null && l.zugewiesen_an === meId)
+  return leads
+}
+
+/** Warteschlange des Power Dialers: freie Leads plus eigene, Leads anderer Personen werden nie angezeigt. */
+export function queueFuerNutzer(queue: DbLead[], meId: string | null): DbLead[] {
+  return queue.filter((l) => l.zugewiesen_an === null || (meId !== null && l.zugewiesen_an === meId))
+}
+
+/** Deutsche Meldung zu einem Fehler der Verteilungsfunktionen (supabase.rpc). */
+export function verteilungsFehler(err: { code?: string | null; message?: string | null } | null | undefined): string {
+  const code = err?.code ?? ''
+  const msg = (err?.message ?? '').toLowerCase()
+  if (code === 'PGRST202' || code === '42883' || msg.includes('could not find the function')) {
+    return 'Die Lead-Verteilung ist serverseitig noch nicht eingerichtet.'
+  }
+  if (code === '42501' || msg.includes('geschaeftsfuehrer')) return 'Nur der Geschäftsführer darf Leads zuweisen.'
+  return 'Die Aktion konnte nicht ausgeführt werden. Bitte später erneut versuchen.'
 }

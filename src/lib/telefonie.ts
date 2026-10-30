@@ -8,7 +8,21 @@ export interface TelefonieGeraet {
   online: boolean
 }
 
+export type TelefonieAnbieter = 'sipgate_classic' | 'sipgate_neo'
+
+export const ANBIETER_LABEL: Record<TelefonieAnbieter, string> = {
+  sipgate_classic: 'Classic',
+  sipgate_neo: 'Neo',
+}
+
+/** Rechte, die das Personal Access Token braucht (Quelle: sipgate-API-Dokumentation/OpenAPI). */
+export const ERFORDERLICHE_RECHTE: Record<TelefonieAnbieter, string[]> = {
+  sipgate_classic: ['sessions:calls:write', 'devices:read'],
+  sipgate_neo: ['rtcm:write', 'devices:read'],
+}
+
 export interface TelefonieStatus {
+  anbieter: TelefonieAnbieter | null
   verbunden: boolean
   tokenGespeichert: boolean
   geraetId: string | null
@@ -27,6 +41,7 @@ export function parseStatus(json: unknown): TelefonieStatus | null {
   const o = json as Record<string, unknown>
   if (o.ok !== true) return null
   return {
+    anbieter: o.anbieter === 'sipgate_neo' ? 'sipgate_neo' : o.anbieter === 'sipgate_classic' ? 'sipgate_classic' : null,
     verbunden: o.verbunden === true,
     tokenGespeichert: o.tokenGespeichert === true,
     geraetId: str(o.geraetId),

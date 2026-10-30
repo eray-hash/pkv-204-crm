@@ -25,6 +25,7 @@ import { useLeads } from '../context/LeadsContext'
 import { NEWS_TICKER } from '../data/seed'
 import { formatDateTime } from '../lib/utils'
 import { useToast } from './ToastContext'
+import { LiveSwitch, PraesenzListe, PraesenzMenu } from './Praesenz'
 
 const leadSubLinks = [
   { to: '/leads', label: 'Alle Leads', end: true },
@@ -114,8 +115,11 @@ export default function Layout() {
         <div className="border-b border-ink-100 p-3 lg:hidden">
           <p className="mb-2 px-1 text-xs font-medium uppercase tracking-wide text-ink-400">Einstellungen</p>
           <div className="flex flex-wrap items-center gap-2">
+            <LiveSwitch langesLabel />
             <LanguageSwitch />
           </div>
+          <p className="mb-1 mt-4 px-1 text-xs font-medium uppercase tracking-wide text-ink-400">Team</p>
+          <PraesenzListe />
         </div>
 
         <nav onClick={(e) => (e.target as HTMLElement).closest('a') && setMobileNavOpen(false)} className="flex-1 space-y-0.5 overflow-y-auto px-3 py-4 text-sm">
@@ -194,6 +198,8 @@ export default function Layout() {
 
           <div className="flex shrink-0 items-center gap-1 lg:gap-1.5">
             <div className="hidden items-center gap-1.5 lg:flex">
+              <LiveSwitch />
+              <PraesenzMenu />
               <LanguageSwitch />
             </div>
 

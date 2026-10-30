@@ -41,8 +41,9 @@ Rate-Limit, Login-Oberflaeche im CRM, Anbindung des Frontends an diese Datenbank
 
 Der Button „Mobil (Satellite)“ im Power Dialer löst Anrufe über sipgate aus (Rückruf-Prinzip: erst klingelt das eigene Gerät,
 dann wird der Lead verbunden). Jeder Nutzer trägt sein eigenes Personal Access Token unter Mein Profil → Telefonie ein
-(Rechte nur `sessions:calls:write` und `devices:read`; Anlage unter https://app.sipgate.com/personal-access-token).
-Umgesetzt ist nur das sipgate-**Classic**-Konto (`POST /v2/sessions/calls`); Neo-Konten (`POST /calls`) werden mit einer klaren Meldung abgelehnt.
+(Classic: Rechte nur `sessions:calls:write` und `devices:read`; Anlage unter https://app.sipgate.com/personal-access-token).
+Unterstützt sind zwei Adapter, gewählt über „Kontotyp“ im Profil: `sipgate_classic` (`POST /v2/sessions/calls`) und `sipgate_neo`
+(`POST /v2/calls`, Rechte `rtcm:write` und `devices:read`, siehe Abschnitt „sipgate Neo“).
 
 Sicherheit: Das Token liegt nur serverseitig, mit AES-GCM verschlüsselt (Schlüssel = Secret `TELEFONIE_KEY`) in `telefonie_zugaenge`
 (RLS an, keine Policy, nur `service_role`). Es wird nie an den Browser zurückgegeben und nie geloggt. Die Funktion `anrufen`
@@ -63,3 +64,37 @@ Einrichten:
    Ohne Verbindung (oder wenn die Funktionen noch nicht deployt sind) fällt „Mobil“ wie bisher auf den `tel:`-Link zurück.
 
 Tests (ohne Netzwerk, gegen gefakte sipgate-Antworten): `node --test "supabase/functions/**/*.test.ts"` bzw. `npm test` im Projektordner.
+
+## Stand der Veroeffentlichung (27.10.2026)
+
+Die Migration `20261028000000_telefonie.sql` ist im Projekt eingespielt, das Secret `TELEFONIE_KEY` ist gesetzt, und die Funktionen
+`anrufen` und `telefonie-verbinden` sind ohne Gateway-JWT-Pruefung veroeffentlicht. Weil das Dashboard keinen `_shared`-Ordner kennt,
+wurden sie als gebuendelte Einzeldateien hochgeladen: `node_modules/.bin/rolldown supabase/functions/<name>/index.ts -f esm -p neutral -e "jsr:@supabase/supabase-js@2" -o <ziel>.js`.
+Nach Code-Aenderungen muessen die Funktionen so neu gebuendelt und im Dashboard ersetzt werden.
+Noch nicht gegen ein echtes sipgate-Konto getestet.
+
+## Lead-Verteilung (30.10.2026)
+
+Alle sehen alle neuen Live-Leads; wer zuerst übernimmt, bekommt den Lead. Der Geschäftsführer kann zusätzlich zuweisen und freigeben.
+Zuweisungen laufen ausschließlich über die Funktionen `lead_uebernehmen`, `lead_freigeben`, `lead_zuweisen` (atomar, `security definer`);
+Nutzer dürfen auf `leads` nur noch `status` und `naechster_anruf_ab` direkt ändern, auf `profiles` nur Name, Telefonnummern, Zeitzone und
+Erreichbarkeit. Die Edge Function `anrufen` übernimmt einen freien Lead atomar VOR dem sipgate-Anruf; gehört er jemand anderem, antwortet sie
+mit 409 „Dieser Lead wird bereits von jemand anderem bearbeitet.“ (ohne Namen).
+Zeiten werden in der Zeitzone des Nutzers angezeigt (Profil → Erreichbarkeit, z. B. `Europe/Berlin` oder `Asia/Bangkok`). „Ich nehme Live-Leads
+an“ im Kopf schaltet Ton/Toast für neue Leads; optional automatisch nach einem Erreichbarkeitsfenster (auch über Mitternacht).
+Bekannte Grenze: freie Leads im Status beratung/termin_vereinbart lassen sich nicht selbst übernehmen, hier weist der Geschäftsführer zu.
+
+## sipgate Neo (nach Doku, nie gegen ein echtes Konto getestet)
+
+Der Neo-Adapter ist nur so weit gebaut, wie die sipgate-Dokumentation ihn belegt: `POST /v2/calls` mit `deviceId`, `targetNumber`, optional
+`callerId` (Rufnummern ohne „+“, wie in den Doku-Beispielen), Antwort `callSid`; benötigtes Recht `rtcm:write`.
+**Zugangsweg für Neo-Konten ungeklärt; Token-Anlage im Web für neue Verträge evtl. nicht möglich, bitte sipgate-Support fragen**
+(Personal Access Tokens gibt es laut sipgate nur für Verträge vor dem 25.08.2025). Unsicher: Rufnummernformat, ob `rtcm:write` allein reicht,
+Standard-`channelId`, Herkunft der Geräte-IDs für Neo, ob `GET /authorization/userinfo` mit Neo-Tokens funktioniert. Ob ein Konto Classic oder Neo ist,
+lässt sich aus dem Token nicht ableiten, deshalb wählt der Nutzer den Kontotyp selbst (im Zweifel sipgate-Support fragen).
+
+## Schritte nach diesem Stand
+
+1. `migrations/20261030000000_verteilung.sql` einspielen.
+2. `migrations/20261030000100_telefonie_neo.sql` einspielen.
+3. `anrufen` und `telefonie-verbinden` neu bündeln (rolldown-Befehl oben) und ersetzen. Keine neuen Secrets.

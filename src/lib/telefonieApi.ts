@@ -6,6 +6,7 @@ import {
   fehlerAusAntwort,
   parseGeraete,
   parseStatus,
+  type TelefonieAnbieter,
   type TelefonieGeraet,
   type TelefonieStatus,
 } from './telefonie'
@@ -42,8 +43,8 @@ async function verbinden<T>(body: Record<string, unknown>, lesen: (json: unknown
 /** live=false: schnelle Abfrage ohne Pruefung bei sipgate (z. B. fuer den Power Dialer). */
 export const telefonieStatus = (live = true) => verbinden<TelefonieStatus>({ aktion: 'status', live }, parseStatus)
 
-export const telefonieVerbinden = (tokenId: string, token: string) =>
-  verbinden<TelefonieGeraet[]>({ aktion: 'verbinden', tokenId, token }, (j) => {
+export const telefonieVerbinden = (tokenId: string, token: string, anbieter: TelefonieAnbieter) =>
+  verbinden<TelefonieGeraet[]>({ aktion: 'verbinden', anbieter, tokenId, token }, (j) => {
     const g = parseGeraete(j)
     return g.length > 0 ? g : null
   })

@@ -9,7 +9,7 @@ import {
   telefonieTrennen,
   telefonieVerbinden,
 } from '../../lib/telefonieApi'
-import { geraetTypLabel, type TelefonieGeraet, type TelefonieStatus } from '../../lib/telefonie'
+import { ANBIETER_LABEL, ERFORDERLICHE_RECHTE, geraetTypLabel, type TelefonieAnbieter, type TelefonieGeraet, type TelefonieStatus } from '../../lib/telefonie'
 
 type Modus = 'uebersicht' | 'verbinden' | 'geraetewahl'
 
@@ -20,6 +20,7 @@ export default function Telefonie() {
   const [ladeFehler, setLadeFehler] = useState<string | null>(null)
   const [modus, setModus] = useState<Modus>('verbinden')
 
+  const [anbieter, setAnbieter] = useState<TelefonieAnbieter>('sipgate_classic')
   const [tokenId, setTokenId] = useState('')
   const [token, setToken] = useState('')
   const [geraete, setGeraete] = useState<TelefonieGeraet[]>([])
@@ -49,6 +50,7 @@ export default function Telefonie() {
     setStatus(res.data)
     setCaller(res.data.rufnummerCaller ?? '')
     setAnzeige(res.data.rufnummerAnzeige ?? '')
+    if (res.data.anbieter) setAnbieter(res.data.anbieter)
     if (!res.data.tokenGespeichert) {
       setModus('verbinden')
     } else if (!res.data.verbunden) {
@@ -76,7 +78,7 @@ export default function Telefonie() {
       return
     }
     setBusy(true)
-    const res = await telefonieVerbinden(tokenId.trim(), token.trim())
+    const res = await telefonieVerbinden(tokenId.trim(), token.trim(), anbieter)
     setBusy(false)
     if (res.error || !res.data) {
       setFehler(res.error ?? 'Die Verbindung konnte nicht hergestellt werden.')
@@ -87,7 +89,7 @@ export default function Telefonie() {
     setTokenId('')
     showToast('sipgate-Token geprüft – bitte jetzt ein Gerät auswählen')
     zeigeGeraeteWahl(res.data, status?.geraetId ?? null)
-    setStatus((s) => (s ? { ...s, tokenGespeichert: true, verbunden: false } : s))
+    setStatus((s) => (s ? { ...s, anbieter, tokenGespeichert: true, verbunden: false } : s))
   }
 
   async function geraetSpeichern() {
@@ -150,6 +152,7 @@ export default function Telefonie() {
         {verbunden && status ? (
           <div className="mt-4 space-y-3 text-sm">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Info label="Kontotyp" wert={status.anbieter ? `sipgate ${ANBIETER_LABEL[status.anbieter]}` : '–'} />
               <Info label="Gerät" wert={status.geraetName ?? status.geraetId ?? '–'} />
               {status.geraetName && status.geraetId && <Info label="Geräte-ID" wert={status.geraetId} />}
               {status.rufnummerCaller && <Info label="Eigene Rufnummer (klingelt zuerst)" wert={status.rufnummerCaller} />}
@@ -211,6 +214,36 @@ export default function Telefonie() {
           <h2 className="mb-3 flex items-center gap-2 font-semibold text-ink-800">
             <KeyRound size={16} /> {verbunden ? 'Neues Token eintragen' : 'sipgate verbinden'}
           </h2>
+          <fieldset className="mb-4">
+            <legend className="mb-1 text-xs font-medium text-ink-500">Kontotyp bei sipgate</legend>
+            <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Kontotyp">
+              {(['sipgate_classic', 'sipgate_neo'] as const).map((a) => (
+                <label
+                  key={a}
+                  className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
+                    anbieter === a ? 'border-brand-400 bg-brand-50 text-brand-800' : 'border-ink-200 text-ink-600 hover:bg-ink-50'
+                  }`}
+                >
+                  <input type="radio" name="kontotyp" value={a} checked={anbieter === a} onChange={() => setAnbieter(a)} className="h-4 w-4 text-brand-600" />
+                  {ANBIETER_LABEL[a]}
+                </label>
+              ))}
+            </div>
+            <p className="mt-2 text-xs text-ink-500">
+              Woran man den Kontotyp erkennt, ist in der sipgate-API-Dokumentation nicht beschrieben (ein Personal Access Token verrät es nicht). Im
+              Zweifel bitte den sipgate-Support fragen.
+            </p>
+            {anbieter === 'sipgate_neo' && (
+              <div className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800" role="note">
+                <p className="font-semibold">Neo: noch nicht erprobt, Zugangsweg ungeklärt</p>
+                <p className="mt-1">
+                  Zugangsweg für Neo-Konten ungeklärt; Token-Anlage im Web für neue Verträge evtl. nicht möglich, bitte sipgate-Support fragen. Der
+                  Neo-Anruf ist nur so weit umgesetzt, wie die sipgate-Dokumentation ihn belegt (POST /calls), und wurde nie gegen ein echtes Konto
+                  getestet. Bis das geklärt ist, hilft „Nummer kopieren“, um einen Lead manuell über die sipgate-App anzurufen.
+                </p>
+              </div>
+            )}
+          </fieldset>
           <ol className="mb-4 list-decimal space-y-1 pl-5 text-sm text-ink-600">
             <li>
               <a
@@ -225,8 +258,14 @@ export default function Telefonie() {
             </li>
             <li>„Token hinzufügen“ wählen und einen Namen vergeben, z. B. „CRM“.</li>
             <li>
-              Nur diese beiden Rechte auswählen: <code className="rounded bg-ink-100 px-1">sessions:calls:write</code> und{' '}
-              <code className="rounded bg-ink-100 px-1">devices:read</code>.
+              Nur diese beiden Rechte auswählen:{' '}
+              {ERFORDERLICHE_RECHTE[anbieter].map((r, i) => (
+                <span key={r}>
+                  {i > 0 && ' und '}
+                  <code className="rounded bg-ink-100 px-1">{r}</code>
+                </span>
+              ))}
+              .
             </li>
             <li>Token-ID und Token kopieren und unten eintragen. Das Token wird von sipgate nur einmal angezeigt.</li>
           </ol>
@@ -262,8 +301,7 @@ export default function Telefonie() {
             </div>
             <p className="flex items-start gap-1.5 text-xs text-ink-400">
               <ShieldCheck size={13} className="mt-0.5 shrink-0" />
-              Das Token wird nur einmal übertragen, auf dem Server verschlüsselt gespeichert und nie wieder angezeigt. Aktuell werden nur sipgate-Classic-Konten
-              unterstützt.
+              Das Token wird nur einmal übertragen, auf dem Server verschlüsselt gespeichert und nie wieder angezeigt. Neo ist nach Doku umgesetzt, aber ungetestet.
             </p>
           </form>
         </Card>
@@ -296,9 +334,11 @@ export default function Telefonie() {
           <details className="mt-4 rounded-xl bg-ink-50 px-3 py-2 text-sm">
             <summary className="cursor-pointer text-xs font-medium text-ink-500">Erweitert (optional)</summary>
             <div className="mt-3 space-y-3">
-              <Field label="Eigene Rufnummer, die zuerst klingeln soll (statt des Geräts)">
-                <input className={inputClass} value={caller} onChange={(e) => setCaller(e.target.value)} placeholder="z. B. +49 151 12345678" />
-              </Field>
+              {(status?.anbieter ?? anbieter) !== 'sipgate_neo' && (
+                <Field label="Eigene Rufnummer, die zuerst klingeln soll (statt des Geräts)">
+                  <input className={inputClass} value={caller} onChange={(e) => setCaller(e.target.value)} placeholder="z. B. +49 151 12345678" />
+                </Field>
+              )}
               <Field label="Rufnummer, die beim Lead angezeigt wird">
                 <input className={inputClass} value={anzeige} onChange={(e) => setAnzeige(e.target.value)} placeholder="z. B. +49 30 1234567" />
               </Field>

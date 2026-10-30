@@ -4,9 +4,10 @@
 -- 1) Eingeloggte Nutzer duerfen bei Leads bisher JEDE Spalte aendern (Name, Telefon, Tarifbeitrag, ...),
 --    weil die Policy leads_update nur zeilenweise prueft. Das Frontend aendert ausschliesslich
 --    status und naechster_anruf_ab. Spaltenrechte beschraenken das auf das Noetige.
---    (zugewiesen_an bleibt fuer eine spaetere Zuweisung durch Mitarbeiter/Geschaeftsfuehrer aenderbar.)
+--    Die Zuweisung (zugewiesen_an) laeuft NUR ueber die Funktionen aus 20261030000000_verteilung.sql
+--    (lead_uebernehmen/-freigeben/-zuweisen); diese Datei wird dort fortgefuehrt und gilt als ersetzt.
 revoke update on public.leads from authenticated;
-grant update (status, naechster_anruf_ab, zugewiesen_an) on public.leads to authenticated;
+grant update (status, naechster_anruf_ab) on public.leads to authenticated;
 
 -- 2) Fremdschluessel-Spalten haben in Postgres keinen automatischen Index. Notizen und Anrufe werden
 --    im CRM immer pro Lead geladen.

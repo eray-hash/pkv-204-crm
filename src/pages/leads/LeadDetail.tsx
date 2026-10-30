@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Check, Mail, MessageSquare, Phone, PhoneCall, ShieldCheck, ShieldAlert, Inbox } from 'lucide-react'
+import { ArrowLeft, Check, Mail, MessageSquare, Phone, PhoneCall, ShieldCheck, ShieldAlert, Inbox, UserCheck } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useLeads } from '../../context/LeadsContext'
+import { useTeam } from '../../context/TeamContext'
+import NummerKopieren from '../../components/NummerKopieren'
 import { useToast } from '../../components/ToastContext'
 import { Badge, Button, Card, ErrorBlock, LoadingBlock, inputClass } from '../../components/ui'
 import { DbStatusBadge } from '../../components/LeadTable'
@@ -20,6 +22,7 @@ import {
 import {
   ageInDays,
   CLOSING_STATUS,
+  leadZugriff,
   PIPELINE_STATUS,
   STATUS_LABEL,
   telHref,
@@ -40,8 +43,9 @@ type Ereignis = { id: string; zeit: string; text: string; icon: ReactNode }
 export default function LeadDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { session } = useAuth()
-  const { applyLead } = useLeads()
+  const { session, profile } = useAuth()
+  const { leads, applyLead, uebernehmen, freigeben, zuweisen } = useLeads()
+  const { mitglieder, nameVon } = useTeam()
   const { showToast } = useToast()
 
   const [lead, setLead] = useState<DbLead | null>(null)
@@ -52,6 +56,18 @@ export default function LeadDetail() {
   const [speichertNotiz, setSpeichertNotiz] = useState(false)
   const [statusBusy, setStatusBusy] = useState(false)
   const [abschluss, setAbschluss] = useState<DbLeadStatus | ''>('')
+  const [zuweisenAn, setZuweisenAn] = useState('')
+  const [verteilungBusy, setVerteilungBusy] = useState(false)
+
+  // Aenderungen anderer Personen (Realtime) aus der Lead-Liste uebernehmen
+  const ctxLead = leads.find((l) => l.id === id)
+  useEffect(() => {
+    if (ctxLead) setLead(ctxLead)
+  }, [ctxLead])
+
+  const meId = session?.user.id ?? null
+  const istGF = profile?.rolle === 'geschaeftsfuehrer'
+  const zugriff = lead ? leadZugriff(lead, meId, istGF) : null
 
   const ladeZusatz = useCallback(async (leadId: string) => {
     const [e, n, a] = await Promise.all([fetchEinwilligung(leadId), fetchNotizen(leadId), fetchAnrufe(leadId)])
@@ -100,6 +116,15 @@ export default function LeadDetail() {
   async function setzeStatus(status: DbLeadStatus) {
     if (!lead || status === lead.status) return
     setStatusBusy(true)
+    // Ein Mitarbeiter muss einen freien Lead zuerst uebernehmen (Datenbankregel); das passiert hier automatisch.
+    if (zugriff?.uebernahmeVorBearbeitung) {
+      const u = await uebernehmen(lead.id)
+      if (u.fehler || !u.ok) {
+        setStatusBusy(false)
+        showToast(u.fehler ?? 'Dieser Lead konnte nicht übernommen werden (bereits vergeben oder Status nicht übernehmbar).', 'info')
+        return
+      }
+    }
     const res = await updateLeadRow(lead.id, { status })
     setStatusBusy(false)
     if (res.error || !res.data) {
@@ -140,7 +165,18 @@ export default function LeadDetail() {
     )
   }
 
+  const z = zugriff as NonNullable<typeof zugriff>
+  const besitzerName = nameVon(lead.zugewiesen_an)
   const pipelineIndex = PIPELINE_STATUS.indexOf(lead.status)
+
+  async function verteilungsAktion(aktion: () => Promise<{ ok: boolean; fehler: string | null }>, okText: string, nichtOkText: string) {
+    setVerteilungBusy(true)
+    const res = await aktion()
+    setVerteilungBusy(false)
+    if (res.fehler) showToast(res.fehler, 'info')
+    else if (res.ok) showToast(okText)
+    else showToast(nichtOkText, 'info')
+  }
   const abgeschlossen = CLOSING_STATUS.includes(lead.status)
 
   return (
@@ -153,9 +189,18 @@ export default function LeadDetail() {
         <div className="min-w-0">
           <h1 className="text-xl font-semibold text-ink-900">{lead.name}</h1>
           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm text-ink-500">
-            <a href={telHref(lead.telefon)} className="flex items-center gap-1.5 hover:text-brand-700">
-              <Phone size={14} /> {lead.telefon}
-            </a>
+            {z.darfBearbeiten ? (
+              <>
+                <a href={telHref(lead.telefon)} className="flex items-center gap-1.5 hover:text-brand-700">
+                  <Phone size={14} /> {lead.telefon}
+                </a>
+                <NummerKopieren nummer={lead.telefon} />
+              </>
+            ) : (
+              <span className="flex items-center gap-1.5">
+                <Phone size={14} /> {lead.telefon}
+              </span>
+            )}
             <a href={`mailto:${lead.email}`} className="flex min-w-0 items-center gap-1.5 hover:text-brand-700">
               <Mail size={14} className="shrink-0" /> <span className="truncate">{lead.email}</span>
             </a>
@@ -169,6 +214,18 @@ export default function LeadDetail() {
         </div>
       </div>
 
+      {z.bearbeiter === 'andere' && (
+        <p className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800" role="status">
+          Wird von {besitzerName} bearbeitet.{' '}
+          {istGF ? 'Als Geschäftsführer können Sie den Lead dennoch bearbeiten, freigeben oder neu zuweisen.' : 'Status, Notizen und Anrufe sind für Sie deaktiviert.'}
+        </p>
+      )}
+      {z.bearbeiter === 'frei' && !istGF && (
+        <p className="mt-4 rounded-lg bg-brand-50 px-3 py-2 text-sm text-brand-800" role="status">
+          Dieser Lead ist frei. Mit „Übernehmen“ (oder beim Ändern des Status) gehört er Ihnen.
+        </p>
+      )}
+
       <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-3">
         <div className="space-y-5 lg:col-span-2">
           <Card className="p-5">
@@ -180,7 +237,7 @@ export default function LeadDetail() {
                 return (
                   <button
                     key={status}
-                    disabled={statusBusy}
+                    disabled={statusBusy || !z.darfBearbeiten}
                     onClick={() => void setzeStatus(status)}
                     className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors disabled:opacity-60 ${
                       aktuell
@@ -204,6 +261,7 @@ export default function LeadDetail() {
                 value={abschluss}
                 onChange={(e) => setAbschluss(e.target.value as DbLeadStatus | '')}
                 aria-label="Abschluss-Status wählen"
+                disabled={!z.darfBearbeiten}
               >
                 <option value="">Status wählen …</option>
                 {CLOSING_STATUS.map((s) => (
@@ -212,7 +270,7 @@ export default function LeadDetail() {
                   </option>
                 ))}
               </select>
-              <Button variant="danger" disabled={!abschluss || statusBusy} onClick={() => abschluss && void setzeStatus(abschluss)}>
+              <Button variant="danger" disabled={!abschluss || statusBusy || !z.darfBearbeiten} onClick={() => abschluss && void setzeStatus(abschluss)}>
                 Abschließen
               </Button>
             </div>
@@ -239,9 +297,10 @@ export default function LeadDetail() {
               placeholder="Neue Notiz zum Gespräch …"
               maxLength={10000}
               aria-label="Neue Notiz"
+              disabled={!z.darfBearbeiten}
             />
             <div className="mt-2 flex justify-end">
-              <Button onClick={() => void speichereNotiz()} disabled={speichertNotiz || !notiz.trim()}>
+              <Button onClick={() => void speichereNotiz()} disabled={speichertNotiz || !notiz.trim() || !z.darfBearbeiten}>
                 {speichertNotiz ? 'Speichern …' : 'Notiz speichern'}
               </Button>
             </div>
@@ -275,6 +334,75 @@ export default function LeadDetail() {
         </div>
 
         <div className="space-y-5">
+          <Card className="p-5">
+            <h2 className="mb-3 flex items-center gap-2 font-semibold text-ink-800">
+              <UserCheck size={16} /> Zuständigkeit
+            </h2>
+            <p className="text-sm text-ink-600">
+              {z.bearbeiter === 'frei' ? (
+                <Badge tone="green">Frei</Badge>
+              ) : (
+                <>
+                  Bearbeiter: <span className="font-medium text-ink-800">{z.bearbeiter === 'ich' ? 'Sie' : besitzerName}</span>
+                  {lead.uebernommen_am && <span className="block text-xs text-ink-400">seit {formatDateTime(lead.uebernommen_am)}</span>}
+                </>
+              )}
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {z.darfUebernehmen && (
+                <Button
+                  disabled={verteilungBusy}
+                  onClick={() =>
+                    void verteilungsAktion(() => uebernehmen(lead.id), 'Lead übernommen', 'Dieser Lead ist bereits vergeben oder kann nicht übernommen werden.')
+                  }
+                >
+                  Übernehmen
+                </Button>
+              )}
+              {z.darfFreigeben && (
+                <Button
+                  variant="secondary"
+                  disabled={verteilungBusy}
+                  onClick={() => void verteilungsAktion(() => freigeben(lead.id), 'Lead freigegeben', 'Der Lead konnte nicht freigegeben werden.')}
+                >
+                  Freigeben
+                </Button>
+              )}
+            </div>
+            {z.bearbeiter === 'frei' && !z.darfUebernehmen && (
+              <p className="mt-2 text-xs text-ink-400">Dieser Lead kann wegen seines Status nicht übernommen werden. Der Geschäftsführer kann ihn zuweisen.</p>
+            )}
+            {z.darfZuweisen && (
+              <div className="mt-4 border-t border-ink-100 pt-3">
+                <label className="mb-1 block text-xs font-medium text-ink-500" htmlFor="zuweisen-an">
+                  Zuweisen an …
+                </label>
+                <div className="flex gap-2">
+                  <select id="zuweisen-an" className={inputClass} value={zuweisenAn} onChange={(e) => setZuweisenAn(e.target.value)}>
+                    <option value="">Person wählen …</option>
+                    {mitglieder.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                  <Button
+                    disabled={!zuweisenAn || verteilungBusy}
+                    onClick={() =>
+                      void verteilungsAktion(
+                        () => zuweisen(lead.id, zuweisenAn),
+                        `Lead an ${nameVon(zuweisenAn)} zugewiesen`,
+                        'Der Lead konnte nicht zugewiesen werden.',
+                      ).then(() => setZuweisenAn(''))
+                    }
+                  >
+                    Zuweisen
+                  </Button>
+                </div>
+              </div>
+            )}
+          </Card>
+
           <Card className="p-5">
             <h2 className="mb-3 flex items-center gap-2 font-semibold text-ink-800">
               {zusatz.einwilligung ? <ShieldCheck size={16} className="text-emerald-600" /> : <ShieldAlert size={16} className="text-red-500" />}

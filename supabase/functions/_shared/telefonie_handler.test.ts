@@ -35,6 +35,7 @@ function fakeSipgate(): Sipgate {
           ? antwort(v.devices, {})
           : antwort(200, { items: v.geraete ?? [{ id: 'm0', alias: 'Satellite', type: 'MOBILE', online: true }, { id: 'e1', alias: 'Büro', type: 'EXTERNAL', online: false }] })
       }
+      if (url.endsWith('/v2/calls')) return v.call && v.call !== 200 ? antwort(v.call, { detail: TOKEN }) : antwort(200, { callSid: 'sess-neo' })
       if (url.endsWith('/sessions/calls')) return v.call && v.call !== 200 ? antwort(v.call, { detail: TOKEN }) : antwort(200, { sessionId: 'sess-1' })
       return antwort(404, {})
     },
@@ -109,18 +110,31 @@ test('verbinden: fehlende Rechte (403 bei devices) und keine Geraete werden saub
   assert.equal(store.size, 0)
 })
 
-test('verbinden: Neo-Konto und Netzwerkausfall', async () => {
-  const neo = fakeSipgate()
-  neo.verhalten.domain = 'neo.sipgate.de'
-  const a = await behandleVerbinden(USER, { aktion: 'verbinden', tokenId: TOKEN_ID, token: TOKEN }, verbindenDeps(neo).deps)
-  assert.equal(a.body.code, 'nicht_unterstuetzt')
-
+test('verbinden: Netzwerkausfall', async () => {
   const aus = fakeSipgate()
   aus.verhalten.netz = true
   const b = await behandleVerbinden(USER, { aktion: 'verbinden', tokenId: TOKEN_ID, token: TOKEN }, verbindenDeps(aus).deps)
   assert.equal(b.status, 502)
   assert.ok(!alsText(b.body).includes(TOKEN))
   assert.ok(!alsText(b.body).includes('socket'))
+})
+
+test('verbinden mit Kontotyp Neo: Anbieter wird gespeichert, Geraete kommen wie bei Classic', async () => {
+  const sip = fakeSipgate()
+  const { deps, store } = verbindenDeps(sip)
+  const res = await behandleVerbinden(USER, { aktion: 'verbinden', anbieter: 'sipgate_neo', tokenId: TOKEN_ID, token: TOKEN }, deps)
+  assert.equal(res.status, 200)
+  assert.equal(store.get(USER)!.anbieter, 'sipgate_neo')
+  assert.equal(((await behandleVerbinden(USER, { aktion: 'status' }, deps)).body as { anbieter: string }).anbieter, 'sipgate_neo')
+})
+
+test('Neo: eigene Rufnummer zum Zurueckrufen wird abgelehnt, ohne sie klappt die Geraetewahl', async () => {
+  const sip = fakeSipgate()
+  const { deps } = verbindenDeps(sip)
+  await behandleVerbinden(USER, { aktion: 'verbinden', anbieter: 'sipgate_neo', tokenId: TOKEN_ID, token: TOKEN }, deps)
+  const abgelehnt = await behandleVerbinden(USER, { aktion: 'geraet_waehlen', geraetId: 'm0', rufnummerCaller: '0151 1112222' }, deps)
+  assert.equal(abgelehnt.status, 400)
+  assert.equal((await behandleVerbinden(USER, { aktion: 'geraet_waehlen', geraetId: 'm0' }, deps)).status, 200)
 })
 
 test('verbinden: ungueltige Eingabe ergibt 400', async () => {
@@ -241,7 +255,9 @@ interface Welt {
   sip: Sipgate
   deps: AnrufenDeps
   anrufe: { lead_id: string; user_id: string; kanal: 'mobil'; anbieter: string; provider_call_id: string | null }[]
-  lead: { id: string; telefon: string; status: string; ist_test: boolean } | null
+  lead: { id: string; telefon: string; status: string; ist_test: boolean; zugewiesen_an?: string | null } | null
+  uebernahmen: string[]
+  ereignisse: string[]
   welt: { einwilligung: boolean; letzterAnruf: string | null; verbunden: boolean }
 }
 
@@ -254,15 +270,29 @@ async function weltMitZugang(): Promise<Welt> {
   const w: Welt = {
     sip,
     anrufe: [],
-    lead: { id: LEAD_ID, telefon: '+4915112345678', status: 'neu', ist_test: false },
+    lead: { id: LEAD_ID, telefon: '+4915112345678', status: 'neu', ist_test: false, zugewiesen_an: null },
+    uebernahmen: [],
+    ereignisse: [],
     welt: { einwilligung: true, letzterAnruf: null, verbunden: true },
     deps: undefined as unknown as AnrufenDeps,
   }
   w.deps = {
     schluessel: () => KEY,
-    fetch: sip.fetch,
+    fetch: async (url, init) => {
+      if (url.endsWith('/sessions/calls') || url.endsWith('/v2/calls')) w.ereignisse.push('sipgate-anruf')
+      return sip.fetch(url, init)
+    },
     jetzt: () => new Date('2026-10-28T10:00:10.000Z'),
     ladeLead: async () => w.lead,
+    uebernehmeLead: async (leadId, userId) => {
+      w.ereignisse.push('uebernahme')
+      const frei = !w.lead?.zugewiesen_an || w.lead.zugewiesen_an === userId
+      if (frei && w.lead) {
+        w.lead.zugewiesen_an = userId
+        w.uebernahmen.push(leadId)
+      }
+      return Boolean(frei)
+    },
     hatEinwilligung: async () => w.welt.einwilligung,
     ladeZugang: async (id) => (w.welt.verbunden ? (store.get(id) ?? null) : null),
     letzterAnruf: async () => w.welt.letzterAnruf,
@@ -386,4 +416,85 @@ test('anrufen: mit eigener Rufnummer und angezeigter Rufnummer wird der passende
   const res = await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)
   assert.equal(res.status, 200)
   assert.deepEqual(anrufAufrufe(w)[0].body, { deviceId: 'e1', caller: '+491511112222', callee: '+4915112345678', callerId: '+49301234567' })
+})
+
+// ---------- Lead-Verteilung beim Anruf ----------
+
+test('anrufen: freier Lead wird VOR dem sipgate-Aufruf atomar uebernommen', async () => {
+  const w = await weltMitZugang()
+  const res = await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)
+  assert.equal(res.status, 200)
+  assert.deepEqual(w.ereignisse, ['uebernahme', 'sipgate-anruf'])
+  assert.deepEqual(w.uebernahmen, [LEAD_ID])
+  assert.equal(w.lead!.zugewiesen_an, USER)
+})
+
+test('anrufen: eigener Lead wird nicht erneut uebernommen', async () => {
+  const w = await weltMitZugang()
+  w.lead!.zugewiesen_an = USER
+  assert.equal((await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)).status, 200)
+  assert.deepEqual(w.ereignisse, ['sipgate-anruf'])
+})
+
+test('anrufen: Lead eines anderen wird mit 409 verweigert (ohne Namen), kein Anruf, keine Uebernahme', async () => {
+  const w = await weltMitZugang()
+  w.lead!.zugewiesen_an = '33333333-3333-4333-8333-333333333333'
+  const res = await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)
+  assert.equal(res.status, 409)
+  assert.equal(res.body.code, 'lead_vergeben')
+  assert.equal(res.body.fehler, 'Dieser Lead wird bereits von jemand anderem bearbeitet.')
+  assert.deepEqual(w.ereignisse, [])
+  assert.equal(w.sip.aufrufe.length, 0)
+  assert.equal(w.anrufe.length, 0)
+})
+
+test('anrufen: Wettlauf - wird der Lead zwischen Pruefung und Uebernahme vergeben, kommt 409 und es wird nicht angerufen', async () => {
+  const w = await weltMitZugang()
+  w.deps.uebernehmeLead = async () => false
+  const res = await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)
+  assert.equal(res.status, 409)
+  assert.equal(res.body.code, 'lead_vergeben')
+  assert.equal(anrufAufrufe(w).length, 0)
+})
+
+test('anrufen: scheitert sipgate NACH der Uebernahme, bleibt der Lead dem Nutzer zugewiesen', async () => {
+  const w = await weltMitZugang()
+  w.sip.verhalten.call = 403
+  const res = await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)
+  assert.equal(res.body.code, 'rechte_fehlen')
+  assert.equal(w.lead!.zugewiesen_an, USER)
+  assert.equal(w.anrufe.length, 0)
+})
+
+test('anrufen: ohne verbundene Telefonie wird der freie Lead nicht uebernommen', async () => {
+  const w = await weltMitZugang()
+  w.welt.verbunden = false
+  assert.equal((await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)).body.code, 'nicht_verbunden')
+  assert.deepEqual(w.ereignisse, [])
+  assert.equal(w.lead!.zugewiesen_an, null)
+})
+
+test('anrufen: gesperrte Leads (geschlossen) werden nicht uebernommen', async () => {
+  const w = await weltMitZugang()
+  w.lead!.status = 'verstorben'
+  assert.equal((await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)).body.code, 'lead_gesperrt')
+  assert.deepEqual(w.ereignisse, [])
+})
+
+test('anrufen mit Neo-Konto: POST /calls mit deviceId/targetNumber, Protokoll mit anbieter sipgate_neo', async () => {
+  const sip = fakeSipgate()
+  const { deps: vdeps, store } = verbindenDeps(sip)
+  await behandleVerbinden(USER, { aktion: 'verbinden', anbieter: 'sipgate_neo', tokenId: TOKEN_ID, token: TOKEN }, vdeps)
+  await behandleVerbinden(USER, { aktion: 'geraet_waehlen', geraetId: 'm0' }, vdeps)
+  sip.aufrufe.length = 0
+  const w = await weltMitZugang()
+  w.deps.ladeZugang = async (id) => store.get(id) ?? null
+  w.deps.fetch = sip.fetch
+  const res = await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)
+  assert.equal(res.status, 200)
+  const call = sip.aufrufe.find((a) => a.url.endsWith('/v2/calls'))!
+  assert.equal(call.method, 'POST')
+  assert.deepEqual(call.body, { deviceId: 'm0', targetNumber: '4915112345678' })
+  assert.equal(w.anrufe[0].anbieter, 'sipgate_neo')
+  assert.equal(w.anrufe[0].provider_call_id, 'sess-neo')
 })

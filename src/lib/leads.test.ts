@@ -10,6 +10,10 @@ import {
   filterKategorie,
   imBereich,
   kategorie,
+  leadZugriff,
+  filterZuweisung,
+  queueFuerNutzer,
+  verteilungsFehler,
   mapLeadRow,
   mapLeadRows,
   PIPELINE_STATUS,
@@ -38,6 +42,8 @@ function lead(partial: Partial<DbLead> = {}): DbLead {
     ist_test: false,
     moegliches_duplikat_von: null,
     zugewiesen_an: null,
+    zugewiesen_von: null,
+    uebernommen_am: null,
     naechster_anruf_ab: null,
     created_at: '2026-10-22T10:00:00.000Z',
     updated_at: '2026-10-22T10:00:00.000Z',
@@ -204,4 +210,77 @@ test('Auth-Fehlermeldungen auf Deutsch', () => {
   assert.match(mapAuthError({ message: 'Failed to fetch' }), /Keine Verbindung/)
   assert.match(mapAuthError(new Error('irgendwas')), /fehlgeschlagen/)
   assert.match(mapAuthError(null), /fehlgeschlagen/)
+})
+
+const ICH = 'u-ich'
+const ANDERER = 'u-anderer'
+
+test('leadZugriff: freier Lead - Mitarbeiter kann uebernehmen, muss aber vor dem Bearbeiten uebernehmen', () => {
+  const z = leadZugriff(lead({ zugewiesen_an: null }), ICH, false)
+  assert.equal(z.bearbeiter, 'frei')
+  assert.equal(z.darfUebernehmen, true)
+  assert.equal(z.darfFreigeben, false)
+  assert.equal(z.darfZuweisen, false)
+  assert.equal(z.darfBearbeiten, true)
+  assert.equal(z.uebernahmeVorBearbeitung, true)
+})
+
+test('leadZugriff: freier Lead mit Status ausserhalb der Uebernahme-Status oder Testlead ist nicht uebernehmbar', () => {
+  assert.equal(leadZugriff(lead({ status: 'beratung' }), ICH, false).darfUebernehmen, false)
+  assert.equal(leadZugriff(lead({ status: 'gewonnen' }), ICH, false).darfUebernehmen, false)
+  assert.equal(leadZugriff(lead({ ist_test: true }), ICH, false).darfUebernehmen, false)
+  for (const status of ['neu', 'kontaktiert', 'nicht_erreicht'] as const) assert.equal(leadZugriff(lead({ status }), ICH, false).darfUebernehmen, true)
+})
+
+test('leadZugriff: eigener Lead kann freigegeben und bearbeitet werden', () => {
+  const z = leadZugriff(lead({ zugewiesen_an: ICH }), ICH, false)
+  assert.equal(z.bearbeiter, 'ich')
+  assert.equal(z.darfFreigeben, true)
+  assert.equal(z.darfBearbeiten, true)
+  assert.equal(z.darfUebernehmen, false)
+  assert.equal(z.uebernahmeVorBearbeitung, false)
+})
+
+test('leadZugriff: Lead eines anderen - Mitarbeiter gesperrt, Geschaeftsfuehrer darf alles', () => {
+  const ma = leadZugriff(lead({ zugewiesen_an: ANDERER }), ICH, false)
+  assert.equal(ma.bearbeiter, 'andere')
+  assert.equal(ma.darfBearbeiten, false)
+  assert.equal(ma.darfFreigeben, false)
+  assert.equal(ma.darfUebernehmen, false)
+  const gf = leadZugriff(lead({ zugewiesen_an: ANDERER }), ICH, true)
+  assert.equal(gf.darfBearbeiten, true)
+  assert.equal(gf.darfFreigeben, true)
+  assert.equal(gf.darfZuweisen, true)
+  assert.equal(leadZugriff(lead({ zugewiesen_an: null }), ICH, true).uebernahmeVorBearbeitung, false)
+})
+
+test('filterZuweisung: Frei / Meine / Alle', () => {
+  const leads = [lead({ id: 'a', zugewiesen_an: null }), lead({ id: 'b', zugewiesen_an: ICH }), lead({ id: 'c', zugewiesen_an: ANDERER })]
+  assert.deepEqual(filterZuweisung(leads, 'alle', ICH).map((l) => l.id), ['a', 'b', 'c'])
+  assert.deepEqual(filterZuweisung(leads, 'frei', ICH).map((l) => l.id), ['a'])
+  assert.deepEqual(filterZuweisung(leads, 'meine', ICH).map((l) => l.id), ['b'])
+  assert.deepEqual(filterZuweisung(leads, 'meine', null).map((l) => l.id), [])
+})
+
+test('queueFuerNutzer: freie und eigene Leads, nie die anderer Personen', () => {
+  const q = [lead({ id: 'a', zugewiesen_an: null }), lead({ id: 'b', zugewiesen_an: ICH }), lead({ id: 'c', zugewiesen_an: ANDERER })]
+  assert.deepEqual(queueFuerNutzer(q, ICH).map((l) => l.id), ['a', 'b'])
+  assert.deepEqual(queueFuerNutzer(q, null).map((l) => l.id), ['a'])
+})
+
+test('mapLeadRow: Zuweisungsfelder, fehlende Spalten (vor der Migration) werden zu null', () => {
+  const neu = mapLeadRow({ id: 'x', status: 'neu', zugewiesen_an: 'u1', zugewiesen_von: 'u2', uebernommen_am: '2026-10-30T10:00:00Z' })
+  assert.equal(neu?.zugewiesen_von, 'u2')
+  assert.equal(neu?.uebernommen_am, '2026-10-30T10:00:00Z')
+  const alt = mapLeadRow({ id: 'x', status: 'neu' })
+  assert.equal(alt?.zugewiesen_an, null)
+  assert.equal(alt?.zugewiesen_von, null)
+  assert.equal(alt?.uebernommen_am, null)
+})
+
+test('verteilungsFehler: deutsche Meldungen', () => {
+  assert.match(verteilungsFehler({ code: 'PGRST202', message: 'x' }), /noch nicht eingerichtet/)
+  assert.match(verteilungsFehler({ code: '42501', message: 'Nur der Geschaeftsfuehrer darf Leads zuweisen.' }), /Geschäftsführer/)
+  assert.match(verteilungsFehler({ code: 'XX', message: 'boom' }), /nicht ausgeführt/)
+  assert.match(verteilungsFehler(null), /nicht ausgeführt/)
 })

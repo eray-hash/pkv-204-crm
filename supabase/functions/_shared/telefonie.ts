@@ -29,6 +29,7 @@ export type FehlerCode =
   | 'token_unlesbar'
   | 'lead_nicht_gefunden'
   | 'lead_gesperrt'
+  | 'lead_vergeben'
   | 'keine_einwilligung'
   | 'keine_geraete'
   | 'konfiguration'
@@ -138,7 +139,7 @@ export type Parse<T> = { ok: true; value: T } | { ok: false; meldung: string }
 
 export type VerbindenAnfrage =
   | { aktion: 'status'; live: boolean }
-  | { aktion: 'verbinden'; tokenId: string; token: string }
+  | { aktion: 'verbinden'; anbieter: Anbieter; tokenId: string; token: string }
   | { aktion: 'geraete' }
   | { aktion: 'geraet_waehlen'; geraetId: string; rufnummerCaller: string | null; rufnummerAnzeige: string | null }
   | { aktion: 'trennen' }
@@ -177,7 +178,12 @@ export function parseVerbindenBody(raw: unknown): Parse<VerbindenAnfrage> {
       if (!token || !SICHERES_ZEICHEN.test(token) || token.length > 200) {
         return { ok: false, meldung: 'Bitte das Token eingeben (ohne Leerzeichen).' }
       }
-      return { ok: true, value: { aktion: 'verbinden', tokenId, token } }
+      // Ohne Angabe gilt Classic (abwaertskompatibel); der Nutzer waehlt den Kontotyp im Frontend.
+      const anbieter = o.anbieter === undefined || o.anbieter === null ? ANBIETER_CLASSIC : o.anbieter
+      if (anbieter !== ANBIETER_CLASSIC && anbieter !== ANBIETER_NEO) {
+        return { ok: false, meldung: 'Bitte den Kontotyp wählen (Classic oder Neo).' }
+      }
+      return { ok: true, value: { aktion: 'verbinden', anbieter, tokenId, token } }
     }
     case 'geraet_waehlen': {
       const geraetId = textfeld(o.geraetId)
@@ -213,6 +219,8 @@ export interface LeadFuerAnruf {
   telefon: string
   status: string
   ist_test: boolean
+  /** Nutzer, dem der Lead zugewiesen ist; null = frei */
+  zugewiesen_an?: string | null
 }
 
 /** Prueft, ob der Lead angerufen werden darf, und gibt die Rufnummer (E.164) zurueck. */
@@ -230,6 +238,21 @@ export function pruefeLeadAnrufbar(lead: LeadFuerAnruf | null, hatEinwilligung: 
     throw new TelefonieFehler('nummer_ungueltig', 'Die Rufnummer dieses Leads ist ungültig und kann nicht gewählt werden.', 422)
   }
   return nummer
+}
+
+/**
+ * Ein Lead darf nur angerufen werden, wenn er frei ist oder dem Anrufer gehoert.
+ * Gibt true zurueck, wenn der Lead noch frei ist und vor dem Anruf uebernommen werden muss.
+ */
+export function pruefeZuweisung(lead: Pick<LeadFuerAnruf, 'zugewiesen_an'>, userId: string): boolean {
+  const besitzer = lead.zugewiesen_an ?? null
+  if (besitzer === null) return true
+  if (besitzer === userId) return false
+  throw leadVergeben()
+}
+
+export function leadVergeben(): TelefonieFehler {
+  return new TelefonieFehler('lead_vergeben', 'Dieser Lead wird bereits von jemand anderem bearbeitet.', 409)
 }
 
 /** Einfaches Rate-Limit: hoechstens ein Anruf je `mindestAbstandMs` und Nutzer (Grundlage: anrufe.gestartet_am). */
@@ -280,7 +303,8 @@ export interface TelefonieAdapter {
 type Kontext = 'zugang' | 'geraete' | 'anruf'
 
 /** Bildet HTTP-Status von sipgate auf feste, verstaendliche deutsche Meldungen ab (ohne Details oder Tokenteile). */
-export function fehlerAusSipgateStatus(status: number, kontext: Kontext): TelefonieFehler {
+export function fehlerAusSipgateStatus(status: number, kontext: Kontext, anbieter: Anbieter = ANBIETER_CLASSIC): TelefonieFehler {
+  const anrufRecht = anbieter === ANBIETER_NEO ? 'rtcm:write' : 'sessions:calls:write'
   if (status === 401) {
     return new TelefonieFehler(
       'token_ungueltig',
@@ -292,12 +316,12 @@ export function fehlerAusSipgateStatus(status: number, kontext: Kontext): Telefo
     return kontext === 'anruf'
       ? new TelefonieFehler(
           'rechte_fehlen',
-          'sipgate erlaubt diesen Anruf nicht. Bitte prüfen, ob das Token das Recht „sessions:calls:write“ hat und das gewählte Gerät zu Ihrem Konto gehört.',
+          `sipgate erlaubt diesen Anruf nicht. Bitte prüfen, ob das Token das Recht „${anrufRecht}“ hat und das gewählte Gerät zu Ihrem Konto gehört.`,
           422,
         )
       : new TelefonieFehler(
           'rechte_fehlen',
-          'Dem sipgate-Token fehlen Rechte. Es werden „devices:read“ und „sessions:calls:write“ benötigt.',
+          `Dem sipgate-Token fehlen Rechte. Es werden „devices:read“ und „${anrufRecht}“ benötigt.`,
           422,
         )
   }
@@ -334,11 +358,7 @@ function nichtErreichbar(): TelefonieFehler {
 }
 
 function nichtUnterstuetzt(): TelefonieFehler {
-  return new TelefonieFehler(
-    'nicht_unterstuetzt',
-    'sipgate-Neo-Konten werden noch nicht unterstützt. Aktuell funktioniert die Anbindung nur mit sipgate-Classic-Konten.',
-    422,
-  )
+  return new TelefonieFehler('nicht_unterstuetzt', 'Dieser Telefonie-Anbieter wird nicht unterstützt.', 422)
 }
 
 function basicAuth(z: Zugangsdaten): string {
@@ -351,6 +371,7 @@ async function sipgateAnfrage(
   kontext: Kontext,
   f: FetchLike,
   init: { method: 'GET' | 'POST'; body?: unknown },
+  anbieter: Anbieter = ANBIETER_CLASSIC,
 ): Promise<unknown> {
   let res: Response
   try {
@@ -367,7 +388,7 @@ async function sipgateAnfrage(
   } catch {
     throw nichtErreichbar()
   }
-  if (!res.ok) throw fehlerAusSipgateStatus(res.status, kontext)
+  if (!res.ok) throw fehlerAusSipgateStatus(res.status, kontext, anbieter)
   try {
     return await res.json()
   } catch {
@@ -386,51 +407,77 @@ export function baueAnrufBody(ziel: AnrufZiel): Record<string, string> {
   return body
 }
 
+/**
+ * Nutzerkennung (userinfo: "sub") und Geraete (GET /{userId}/devices). Fuer Classic und Neo gleich:
+ * Laut sipgate-Doku (OpenAPI) gibt es dafuer keine Neo-Variante.
+ */
+async function ladeGeraete(z: Zugangsdaten, f: FetchLike, anbieter: Anbieter): Promise<Geraet[]> {
+  const info = await sipgateAnfrage(z, '/authorization/userinfo', 'zugang', f, { method: 'GET' }, anbieter)
+  const o = (info && typeof info === 'object' ? info : {}) as Record<string, unknown>
+  if (typeof o.sub !== 'string' || !o.sub) {
+    throw new TelefonieFehler('anbieter_fehler', 'sipgate hat keine Nutzerkennung geliefert. Bitte später erneut versuchen.', 502)
+  }
+  const data = await sipgateAnfrage(z, `/${encodeURIComponent(o.sub)}/devices`, 'geraete', f, { method: 'GET' }, anbieter)
+  const items = (data && typeof data === 'object' ? (data as { items?: unknown }).items : null) ?? []
+  if (!Array.isArray(items)) return []
+  const geraete: Geraet[] = []
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue
+    const d = item as Record<string, unknown>
+    if (typeof d.id !== 'string' || !d.id) continue
+    geraete.push({
+      id: d.id,
+      name: typeof d.alias === 'string' && d.alias.trim() ? d.alias.trim() : d.id,
+      typ: typeof d.type === 'string' ? d.type.toLowerCase() : 'unbekannt',
+      online: d.online === true,
+    })
+  }
+  return geraete
+}
+
 export const sipgateClassic: TelefonieAdapter = {
   anbieter: ANBIETER_CLASSIC,
 
-  async geraete(z, f = fetch) {
-    const info = await sipgateAnfrage(z, '/authorization/userinfo', 'zugang', f, { method: 'GET' })
-    const o = (info && typeof info === 'object' ? info : {}) as Record<string, unknown>
-    if (typeof o.sub !== 'string' || !o.sub) {
-      throw new TelefonieFehler('anbieter_fehler', 'sipgate hat keine Nutzerkennung geliefert. Bitte später erneut versuchen.', 502)
-    }
-    // Annahme: Neo-Konten sind an einer "neo"-Domain in userinfo erkennbar (Classic: z. B. "sipgate.de")
-    if (typeof o.domain === 'string' && /neo/i.test(o.domain)) throw nichtUnterstuetzt()
-
-    const data = await sipgateAnfrage(z, `/${encodeURIComponent(o.sub)}/devices`, 'geraete', f, { method: 'GET' })
-    const items = (data && typeof data === 'object' ? (data as { items?: unknown }).items : null) ?? []
-    if (!Array.isArray(items)) return []
-    const geraete: Geraet[] = []
-    for (const item of items) {
-      if (!item || typeof item !== 'object') continue
-      const d = item as Record<string, unknown>
-      if (typeof d.id !== 'string' || !d.id) continue
-      geraete.push({
-        id: d.id,
-        name: typeof d.alias === 'string' && d.alias.trim() ? d.alias.trim() : d.id,
-        typ: typeof d.type === 'string' ? d.type.toLowerCase() : 'unbekannt',
-        online: d.online === true,
-      })
-    }
-    return geraete
+  geraete(z, f = fetch) {
+    return ladeGeraete(z, f, ANBIETER_CLASSIC)
   },
 
   async anrufen(z, ziel, f = fetch) {
-    const res = await sipgateAnfrage(z, '/sessions/calls', 'anruf', f, { method: 'POST', body: baueAnrufBody(ziel) })
+    const res = await sipgateAnfrage(z, '/sessions/calls', 'anruf', f, { method: 'POST', body: baueAnrufBody(ziel) }, ANBIETER_CLASSIC)
     const sessionId = res && typeof res === 'object' ? (res as { sessionId?: unknown }).sessionId : null
     return { anrufId: typeof sessionId === 'string' && sessionId ? sessionId : null }
   },
 }
 
-// Neo ist bewusst noch nicht umgesetzt (dort heisst der Aufruf POST /calls mit anderen Feldern).
+/** Neo erwartet Rufnummern in den sipgate-Beispielen ohne "+" (E.164 ohne Pluszeichen, z. B. 4915790123456). */
+export function ohnePlus(nummer: string): string {
+  return nummer.startsWith('+') ? nummer.slice(1) : nummer
+}
+
+/**
+ * Request-Body fuer POST /calls (Neo). NACH DOKU, NIE GEGEN EIN ECHTES NEO-KONTO GETESTET:
+ * Pflicht sind deviceId und targetNumber; callerId ist optional. Es gibt kein "caller" wie bei Classic, daher kann bei
+ * Neo keine eigene Rufnummer zum Zurueckrufen gewaehlt werden (es klingelt das gewaehlte Geraet).
+ * channelId und additionalDevices werden nicht gesetzt (Standardkanal des Geraets).
+ */
+export function baueNeoAnrufBody(ziel: AnrufZiel): Record<string, string> {
+  const body: Record<string, string> = { deviceId: ziel.geraetId, targetNumber: ohnePlus(ziel.callee) }
+  if (ziel.rufnummerAnzeige) body.callerId = ohnePlus(ziel.rufnummerAnzeige)
+  return body
+}
+
+/** sipgate Neo. NACH DOKU gebaut (api.sipgate.com/v2: POST /calls, Antwort callSid), nie gegen ein echtes Konto getestet. */
 export const sipgateNeo: TelefonieAdapter = {
   anbieter: ANBIETER_NEO,
-  geraete() {
-    return Promise.reject(nichtUnterstuetzt())
+
+  geraete(z, f = fetch) {
+    return ladeGeraete(z, f, ANBIETER_NEO)
   },
-  anrufen() {
-    return Promise.reject(nichtUnterstuetzt())
+
+  async anrufen(z, ziel, f = fetch) {
+    const res = await sipgateAnfrage(z, '/calls', 'anruf', f, { method: 'POST', body: baueNeoAnrufBody(ziel) }, ANBIETER_NEO)
+    const callSid = res && typeof res === 'object' ? (res as { callSid?: unknown }).callSid : null
+    return { anrufId: typeof callSid === 'string' && callSid ? callSid : null }
   },
 }
 

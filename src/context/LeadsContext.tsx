@@ -1,8 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { supabase } from '../lib/supabase'
-import { fetchLeads, fetchQueue, updateLeadRow } from '../lib/leadsApi'
-import { mapLeadRow, type DbLead, type LeadPatch } from '../lib/leads'
+import { fetchLead, fetchLeads, fetchQueue, rpcFreigeben, rpcUebernehmen, rpcZuweisen, updateLeadRow, type VerteilungsErgebnis } from '../lib/leadsApi'
+import { mapLeadRow, queueFuerNutzer, type DbLead, type LeadPatch } from '../lib/leads'
+import { effektivOnline } from '../lib/praesenz'
+import { spieleBenachrichtigungston } from '../lib/ton'
 import { useToast } from '../components/ToastContext'
+import { useAuth } from './AuthContext'
 
 interface LeadsContextValue {
   /** Alle echten Leads (ohne Testleads), neueste zuerst */
@@ -18,6 +21,13 @@ interface LeadsContextValue {
   updateLead: (id: string, patch: LeadPatch) => Promise<string | null>
   /** Uebernimmt einen bereits gespeicherten Lead in die lokalen Listen */
   applyLead: (lead: DbLead) => void
+  /** Laedt einen Lead neu aus der Datenbank (z. B. nach einer Verteilungs-Aktion) und uebernimmt ihn in die Listen */
+  refreshLead: (id: string) => Promise<DbLead | null>
+  /** Lead uebernehmen (atomar, wer zuerst kommt). ok=false ohne Fehler bedeutet: bereits vergeben bzw. nicht uebernehmbar. */
+  uebernehmen: (id: string) => Promise<VerteilungsErgebnis>
+  freigeben: (id: string) => Promise<VerteilungsErgebnis>
+  /** Nur Geschaeftsfuehrer */
+  zuweisen: (id: string, userId: string) => Promise<VerteilungsErgebnis>
 }
 
 const LeadsContext = createContext<LeadsContextValue | null>(null)
@@ -26,14 +36,21 @@ const QUEUE_REFRESH_MS = 60_000
 
 export function LeadsProvider({ children }: { children: ReactNode }) {
   const { showToast } = useToast()
+  const { session, profile } = useAuth()
+  const meId = session?.user.id ?? null
   const [leads, setLeads] = useState<DbLead[]>([])
-  const [queue, setQueue] = useState<DbLead[]>([])
+  const [rohQueue, setQueue] = useState<DbLead[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [queueError, setQueueError] = useState<string | null>(null)
 
   const toastRef = useRef(showToast)
   toastRef.current = showToast
+  const profilRef = useRef(profile)
+  profilRef.current = profile
+
+  // Warteschlange: freie Leads plus eigene (Leads anderer Personen werden nie angezeigt)
+  const queue = useMemo(() => queueFuerNutzer(rohQueue, meId), [rohQueue, meId])
 
   const loadAll = useCallback(async () => {
     const [l, q] = await Promise.all([fetchLeads(), fetchQueue()])
@@ -94,7 +111,12 @@ export function LeadsProvider({ children }: { children: ReactNode }) {
         if (payload.eventType === 'INSERT') {
           const neu = mapLeadRow(payload.new)
           if (neu && neu.ist_test) return
-          if (neu && neu.ist_live) toastRef.current(`Neuer Live-Lead: ${neu.name} (${neu.gesellschaft})`)
+          // Hinweis (Toast und Ton) nur, wenn ich effektiv online bin und der Lead noch frei ist
+          const ich = profilRef.current
+          if (neu && neu.ist_live && neu.zugewiesen_an === null && ich && effektivOnline(ich, new Date())) {
+            toastRef.current(`Neuer Live-Lead: ${neu.name} (${neu.gesellschaft})`)
+            spieleBenachrichtigungston()
+          }
         }
         planeNeuladen()
       })
@@ -127,9 +149,31 @@ export function LeadsProvider({ children }: { children: ReactNode }) {
     [applyLead],
   )
 
+  const refreshLead = useCallback(
+    async (id: string) => {
+      const res = await fetchLead(id)
+      if (res.data) applyLead(res.data)
+      return res.data
+    },
+    [applyLead],
+  )
+
+  const verteilung = useCallback(
+    async (aktion: () => Promise<VerteilungsErgebnis>, id: string) => {
+      const res = await aktion()
+      // Auch bei ok=false neu laden: so sieht man sofort, wem der Lead jetzt gehoert
+      if (!res.fehler) await refreshLead(id)
+      return res
+    },
+    [refreshLead],
+  )
+  const uebernehmen = useCallback((id: string) => verteilung(() => rpcUebernehmen(id), id), [verteilung])
+  const freigeben = useCallback((id: string) => verteilung(() => rpcFreigeben(id), id), [verteilung])
+  const zuweisen = useCallback((id: string, userId: string) => verteilung(() => rpcZuweisen(id, userId), id), [verteilung])
+
   const value = useMemo<LeadsContextValue>(
-    () => ({ leads, queue, loading, error, queueError, reload, updateLead, applyLead }),
-    [leads, queue, loading, error, queueError, reload, updateLead, applyLead],
+    () => ({ leads, queue, loading, error, queueError, reload, updateLead, applyLead, refreshLead, uebernehmen, freigeben, zuweisen }),
+    [leads, queue, loading, error, queueError, reload, updateLead, applyLead, refreshLead, uebernehmen, freigeben, zuweisen],
   )
 
   return <LeadsContext.Provider value={value}>{children}</LeadsContext.Provider>

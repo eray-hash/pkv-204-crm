@@ -1,9 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { fehlerAusAntwort, geraetTypLabel, parseGeraete, parseStatus, sollAufTelFallen } from './telefonie.ts'
+import { ERFORDERLICHE_RECHTE, fehlerAusAntwort, geraetTypLabel, parseGeraete, parseStatus, sollAufTelFallen } from './telefonie.ts'
 
 test('parseStatus: verbunden, nicht verbunden und ungueltige Antworten', () => {
   assert.deepEqual(parseStatus({ ok: true, verbunden: false, tokenGespeichert: false }), {
+    anbieter: null,
     verbunden: false,
     tokenGespeichert: false,
     geraetId: null,
@@ -56,4 +57,12 @@ test('Dialer-Fallback auf tel: bei fehlender Verbindung oder nicht erreichbarem 
   assert.equal(sollAufTelFallen('lead_gesperrt'), false)
   assert.equal(sollAufTelFallen('token_ungueltig'), false)
   assert.equal(sollAufTelFallen(null), false)
+})
+
+test('Anbieter: Status kennt Classic und Neo, die noetigen Rechte stammen aus der API-Doku', () => {
+  assert.equal(parseStatus({ ok: true, anbieter: 'sipgate_neo' })?.anbieter, 'sipgate_neo')
+  assert.equal(parseStatus({ ok: true, anbieter: 'sipgate_classic' })?.anbieter, 'sipgate_classic')
+  assert.equal(parseStatus({ ok: true, anbieter: 'x' })?.anbieter, null)
+  assert.deepEqual(ERFORDERLICHE_RECHTE.sipgate_classic, ['sessions:calls:write', 'devices:read'])
+  assert.deepEqual(ERFORDERLICHE_RECHTE.sipgate_neo, ['rtcm:write', 'devices:read'])
 })

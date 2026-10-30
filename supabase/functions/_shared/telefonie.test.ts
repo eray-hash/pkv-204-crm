@@ -8,7 +8,11 @@ import {
   baueAnrufBody,
   entschluessele,
   fehlerAusSipgateStatus,
+  baueNeoAnrufBody,
   normalisiereRufnummer,
+  ohnePlus,
+  pruefeZuweisung,
+  sipgateNeo,
   parseAnrufenBody,
   parseSchluessel,
   parseVerbindenBody,
@@ -109,8 +113,13 @@ test('parseVerbindenBody: Aktionen und Pflichtfelder', () => {
   assert.deepEqual(parseVerbindenBody({ aktion: 'trennen' }), { ok: true, value: { aktion: 'trennen' } })
   assert.deepEqual(parseVerbindenBody({ aktion: 'verbinden', tokenId: ' token-AB ', token: 'abc' }), {
     ok: true,
-    value: { aktion: 'verbinden', tokenId: 'token-AB', token: 'abc' },
+    value: { aktion: 'verbinden', anbieter: 'sipgate_classic', tokenId: 'token-AB', token: 'abc' },
   })
+  assert.deepEqual(parseVerbindenBody({ aktion: 'verbinden', anbieter: 'sipgate_neo', tokenId: 'token-AB', token: 'abc' }), {
+    ok: true,
+    value: { aktion: 'verbinden', anbieter: 'sipgate_neo', tokenId: 'token-AB', token: 'abc' },
+  })
+  assert.equal(parseVerbindenBody({ aktion: 'verbinden', anbieter: 'telekom', tokenId: 'token-AB', token: 'abc' }).ok, false)
   for (const schlecht of [
     { aktion: 'verbinden' },
     { aktion: 'verbinden', tokenId: 'token-AB' },
@@ -250,19 +259,68 @@ test('sipgate Classic: Geraete werden ueber userinfo (sub) und /{userId}/devices
   ])
 })
 
-test('sipgate Classic: Neo-Konto (userinfo-Domain) wird mit klarer Meldung abgelehnt', async () => {
-  const f: FetchLike = async () => jsonAntwort(200, { sub: 'w0', domain: 'neo.sipgate.de' })
-  const fehler = await wirft(() => sipgateClassic.geraete(Z, f))
-  assert.equal(fehler.code, 'nicht_unterstuetzt')
-  assert.match(fehler.message, /Neo/)
+test('sipgate Classic: es gibt keine Erkennung per Domain mehr (den Kontotyp waehlt der Nutzer)', async () => {
+  const f: FetchLike = async (url) => (url.endsWith('/authorization/userinfo') ? jsonAntwort(200, { sub: 'w0', domain: 'neo.sipgate.de' }) : jsonAntwort(200, { items: [{ id: 'm0' }] }))
+  assert.equal((await sipgateClassic.geraete(Z, f)).length, 1)
 })
 
-test('Adapter: Neo und unbekannte Anbieter scheitern mit "nicht unterstuetzt"', async () => {
-  const neo = adapterFuer('sipgate_neo')
-  assert.equal((await wirft(() => neo.anrufen(Z, { geraetId: 'x', rufnummerCaller: null, rufnummerAnzeige: null, callee: '+4915112345678' }))).code, 'nicht_unterstuetzt')
-  assert.equal((await wirft(() => neo.geraete(Z))).code, 'nicht_unterstuetzt')
-  assert.equal((await wirft(() => adapterFuer('anderer'))).code, 'nicht_unterstuetzt')
+test('sipgate Neo (nach Doku): Anruf geht an POST /calls mit deviceId/targetNumber ohne Pluszeichen', async () => {
+  const aufrufe: { url: string; init: RequestInit }[] = []
+  const f: FetchLike = async (url, init) => {
+    aufrufe.push({ url, init })
+    return jsonAntwort(200, { callSid: 'pbx-c-123' })
+  }
+  const r = await sipgateNeo.anrufen(Z, { geraetId: 'e0', rufnummerCaller: null, rufnummerAnzeige: '+4930123456', callee: '+4915112345678' }, f)
+  assert.deepEqual(r, { anrufId: 'pbx-c-123' })
+  assert.equal(aufrufe[0].url, 'https://api.sipgate.com/v2/calls')
+  assert.equal(aufrufe[0].init.method, 'POST')
+  assert.equal((aufrufe[0].init.headers as Record<string, string>).Authorization, `Basic ${Buffer.from(`${Z.tokenId}:${Z.token}`).toString('base64')}`)
+  assert.deepEqual(JSON.parse(aufrufe[0].init.body as string), { deviceId: 'e0', targetNumber: '4915112345678', callerId: '4930123456' })
+})
+
+test('sipgate Neo: Body ohne callerId, keine Classic-Felder, eigene Rufnummer wird nicht gesendet', () => {
+  const body = baueNeoAnrufBody({ geraetId: 'e0', rufnummerCaller: '+491511112222', rufnummerAnzeige: null, callee: '+4915112345678' })
+  assert.deepEqual(body, { deviceId: 'e0', targetNumber: '4915112345678' })
+  assert.equal('caller' in body, false)
+  assert.equal(ohnePlus('+49123'), '49123')
+  assert.equal(ohnePlus('49123'), '49123')
+})
+
+test('sipgate Neo: Geraete ueber userinfo und /{userId}/devices wie bei Classic', async () => {
+  const urls: string[] = []
+  const f: FetchLike = async (url) => {
+    urls.push(url)
+    return url.endsWith('/authorization/userinfo') ? jsonAntwort(200, { sub: 'w7', domain: 'sipgate.de' }) : jsonAntwort(200, { items: [{ id: 'e0', alias: 'Neo-Handy', type: 'EXTERNAL', online: true }] })
+  }
+  assert.deepEqual(await sipgateNeo.geraete(Z, f), [{ id: 'e0', name: 'Neo-Handy', typ: 'external', online: true }])
+  assert.deepEqual(urls, ['https://api.sipgate.com/v2/authorization/userinfo', 'https://api.sipgate.com/v2/w7/devices'])
+})
+
+test('sipgate Neo: Fehler nennen das Neo-Recht rtcm:write, Classic sessions:calls:write', async () => {
+  const neo = fehlerAusSipgateStatus(403, 'anruf', 'sipgate_neo')
+  assert.match(neo.message, /rtcm:write/)
+  assert.ok(!neo.message.includes('sessions:calls:write'))
+  assert.match(fehlerAusSipgateStatus(403, 'anruf').message, /sessions:calls:write/)
+  assert.match(fehlerAusSipgateStatus(403, 'geraete', 'sipgate_neo').message, /rtcm:write/)
+  const f: FetchLike = async () => jsonAntwort(400, {})
+  const fehler = await wirft(() => sipgateNeo.anrufen(Z, { geraetId: 'e0', rufnummerCaller: null, rufnummerAnzeige: null, callee: '+4915112345678' }, f))
+  assert.equal(fehler.code, 'nummer_ungueltig')
+})
+
+test('Adapter: Registry kennt Classic und Neo, unbekannte Anbieter scheitern', async () => {
   assert.equal(adapterFuer('sipgate_classic'), sipgateClassic)
+  assert.equal(adapterFuer('sipgate_neo'), sipgateNeo)
+  assert.equal((await wirft(() => adapterFuer('anderer'))).code, 'nicht_unterstuetzt')
+})
+
+test('Zuweisung: freier Lead wird uebernommen, eigener nicht, fremder wird verweigert (409, ohne Namen)', async () => {
+  assert.equal(pruefeZuweisung({ zugewiesen_an: null }, 'u1'), true)
+  assert.equal(pruefeZuweisung({}, 'u1'), true)
+  assert.equal(pruefeZuweisung({ zugewiesen_an: 'u1' }, 'u1'), false)
+  const f = await wirft(() => pruefeZuweisung({ zugewiesen_an: 'u2' }, 'u1'))
+  assert.equal(f.code, 'lead_vergeben')
+  assert.equal(f.status, 409)
+  assert.equal(f.message, 'Dieser Lead wird bereits von jemand anderem bearbeitet.')
 })
 
 test('sipgate Classic: userinfo ohne Nutzerkennung ergibt Anbieterfehler', async () => {

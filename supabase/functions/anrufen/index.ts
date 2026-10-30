@@ -1,5 +1,6 @@
 // Loest ueber sipgate einen Anruf zu einem Lead aus (Rueckruf: erst klingelt das eigene Geraet, dann wird der Lead verbunden).
 // Eingabe: { lead_id } - nie eine Rufnummer. Die Nummer wird hier aus der Datenbank geladen.
+// Der Lead muss frei sein (wird dann vor dem Anruf atomar uebernommen) oder dem Aufrufer gehoeren.
 import { behandleAnrufen, type ZugangRow } from '../_shared/telefonie_handler.ts'
 import { CORS_HEADERS, antwort, dbFehler, dienstClient, leseJson, nutzerIdAusRequest, schluessel } from '../_shared/server.ts'
 
@@ -20,9 +21,20 @@ Deno.serve(async (req: Request) => {
     fetch: (url, init) => fetch(url, init),
     jetzt: () => new Date(),
     async ladeLead(leadId) {
-      const { data, error } = await client.from('leads').select('id, telefon, status, ist_test').eq('id', leadId).maybeSingle()
+      const { data, error } = await client.from('leads').select('id, telefon, status, ist_test, zugewiesen_an').eq('id', leadId).maybeSingle()
       if (error) dbFehler('Lead laden', error)
       return data ?? null
+    },
+    // Atomar: nur wenn der Lead frei ist oder schon dem Nutzer gehoert (userId stammt aus dem geprueften JWT, ist also eine UUID)
+    async uebernehmeLead(leadId, userId) {
+      const { data, error } = await client
+        .from('leads')
+        .update({ zugewiesen_an: userId, zugewiesen_von: userId, uebernommen_am: new Date().toISOString() })
+        .eq('id', leadId)
+        .or(`zugewiesen_an.is.null,zugewiesen_an.eq.${userId}`)
+        .select('id')
+      if (error) dbFehler('Lead übernehmen', error)
+      return (data?.length ?? 0) > 0
     },
     async hatEinwilligung(leadId) {
       const { data, error } = await client.from('consent_records').select('id').eq('lead_id', leadId).maybeSingle()

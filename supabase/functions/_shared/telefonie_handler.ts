@@ -1,14 +1,16 @@
 // Ablauflogik der beiden Telefonie-Funktionen. Die Datenbank- und Netzwerkzugriffe kommen als "deps" herein,
 // dadurch ist alles ohne Supabase/Deno mit `node --test` pruefbar. index.ts verdrahtet nur noch die echten Zugriffe.
 import {
-  ANBIETER_CLASSIC,
+  ANBIETER_NEO,
   TelefonieFehler,
   adapterFuer,
   entschluessele,
   parseAnrufenBody,
   parseVerbindenBody,
+  leadVergeben,
   pruefeLeadAnrufbar,
   pruefeRateLimit,
+  pruefeZuweisung,
   verschluessele,
   type FetchLike,
   type Geraet,
@@ -104,7 +106,7 @@ export async function behandleVerbinden(userId: string, rawBody: unknown, deps: 
 
       case 'verbinden': {
         const z: Zugangsdaten = { tokenId: anfrage.tokenId, token: anfrage.token }
-        const geraete = await adapterFuer(ANBIETER_CLASSIC).geraete(z, deps.fetch)
+        const geraete = await adapterFuer(anfrage.anbieter).geraete(z, deps.fetch)
         if (geraete.length === 0) {
           return fehlerAntwort(
             new TelefonieFehler('keine_geraete', 'Bei sipgate wurden keine Geräte zu diesem Token gefunden. Bitte das Recht „devices:read“ prüfen.', 422),
@@ -114,7 +116,7 @@ export async function behandleVerbinden(userId: string, rawBody: unknown, deps: 
         const blob = await verschluessele(z.token, await deps.schluessel(), aadFuer(userId))
         await deps.speichereZugang({
           user_id: userId,
-          anbieter: ANBIETER_CLASSIC,
+          anbieter: anfrage.anbieter,
           token_id: z.tokenId,
           token_verschluesselt: blob,
           geraet_id: null,
@@ -134,6 +136,11 @@ export async function behandleVerbinden(userId: string, rawBody: unknown, deps: 
       case 'geraet_waehlen': {
         const row = await deps.ladeZugang(userId)
         if (!row) return fehlerAntwort(new TelefonieFehler('nicht_verbunden', 'Es ist noch kein sipgate-Token hinterlegt.', 409))
+        if (row.anbieter === ANBIETER_NEO && anfrage.rufnummerCaller) {
+          return fehlerAntwort(
+            new TelefonieFehler('ungueltige_eingabe', 'Bei sipgate Neo kann keine eigene Rufnummer zum Zurückrufen gewählt werden. Es klingelt das gewählte Gerät.', 400),
+          )
+        }
         const geraete = await adapterFuer(row.anbieter).geraete(await zugangsdaten(row, deps), deps.fetch)
         const gewaehlt = geraete.find((g) => g.id === anfrage.geraetId)
         // Es koennen nur Geraete des eigenen sipgate-Kontos gewaehlt werden.
@@ -165,6 +172,11 @@ export interface AnrufenDeps {
   fetch: FetchLike
   jetzt: () => Date
   ladeLead: (leadId: string) => Promise<LeadFuerAnruf | null>
+  /**
+   * Uebernimmt einen freien Lead atomar fuer den Nutzer (update ... where zugewiesen_an is null or = user returning id).
+   * Gibt false zurueck, wenn der Lead inzwischen jemand anderem gehoert.
+   */
+  uebernehmeLead: (leadId: string, userId: string) => Promise<boolean>
   hatEinwilligung: (leadId: string) => Promise<boolean>
   ladeZugang: (userId: string) => Promise<ZugangRow | null>
   letzterAnruf: (userId: string) => Promise<string | null>
@@ -195,6 +207,14 @@ export async function behandleAnrufen(userId: string, rawBody: unknown, deps: An
       throw new TelefonieFehler('nicht_verbunden', 'Telefonie ist nicht verbunden. Bitte unter Mein Profil → Telefonie einrichten.', 409)
     }
     const z = await zugangsdaten(row, deps)
+
+    // Nur freie oder eigene Leads. Ein freier Lead wird VOR dem Anruf atomar uebernommen; scheitert danach der Anruf,
+    // bleibt er dem Nutzer zugewiesen (er kann ihn im CRM freigeben).
+    if (lead && pruefeZuweisung(lead, userId)) {
+      const uebernommen = await deps.uebernehmeLead(leadId, userId)
+      if (!uebernommen) throw leadVergeben()
+    }
+
     const { anrufId } = await adapterFuer(row.anbieter).anrufen(
       z,
       { geraetId: row.geraet_id, rufnummerCaller: row.rufnummer_caller, rufnummerAnzeige: row.rufnummer_anzeige, callee },
