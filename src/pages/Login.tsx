@@ -2,6 +2,7 @@ import { useState, type FormEvent, type ReactNode } from 'react'
 import { AlertCircle, CheckCircle2, Loader2 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { inputClass, Field } from '../components/ui'
+import PasswortFeld from '../components/PasswortFeld'
 
 type Modus = 'login' | 'reset' | 'neuesPasswort'
 
@@ -123,10 +124,10 @@ export default function Login({ start = 'login' }: { start?: Modus }) {
       <Rahmen titel="Neues Passwort festlegen" untertitel="Bitte ein neues Passwort für Ihr Konto vergeben.">
         <form onSubmit={neuesSetzen} className="space-y-3" noValidate>
           <Field label="Neues Passwort">
-            <input type="password" autoComplete="new-password" className={inputClass} value={passwort} onChange={(e) => setPasswort(e.target.value)} />
+            <PasswortFeld autoComplete="new-password" value={passwort} onChange={(e) => setPasswort(e.target.value)} />
           </Field>
           <Field label="Neues Passwort wiederholen">
-            <input type="password" autoComplete="new-password" className={inputClass} value={passwort2} onChange={(e) => setPasswort2(e.target.value)} />
+            <PasswortFeld autoComplete="new-password" value={passwort2} onChange={(e) => setPasswort2(e.target.value)} />
           </Field>
           {fehler && <Fehler text={fehler} />}
           <Senden busy={busy}>Passwort speichern</Senden>
@@ -160,7 +161,7 @@ export default function Login({ start = 'login' }: { start?: Modus }) {
           <input type="email" autoComplete="email" className={inputClass} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@firma.de" />
         </Field>
         <Field label="Passwort">
-          <input type="password" autoComplete="current-password" className={inputClass} value={passwort} onChange={(e) => setPasswort(e.target.value)} />
+          <PasswortFeld autoComplete="current-password" value={passwort} onChange={(e) => setPasswort(e.target.value)} />
         </Field>
         {fehler && <Fehler text={fehler} />}
         <Senden busy={busy}>Anmelden</Senden>

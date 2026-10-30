@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { AlertCircle, CheckCircle2, ExternalLink, KeyRound, Loader2, PhoneCall, ShieldCheck } from 'lucide-react'
 import { useToast } from '../../components/ToastContext'
+import PasswortFeld from '../../components/PasswortFeld'
 import { Badge, Button, Card, ErrorBlock, Field, LoadingBlock, inputClass } from '../../components/ui'
 import {
   telefonieGeraete,
@@ -271,18 +272,15 @@ export default function Telefonie() {
           </ol>
           <form onSubmit={verbinden} className="space-y-3" autoComplete="off">
             <Field label="Token-ID">
-              <input
-                type="password"
-                className={inputClass}
+              <PasswortFeld
                 value={tokenId}
                 onChange={(e) => setTokenId(e.target.value)}
                 autoComplete="off"
-                spellCheck={false}
                 placeholder="token-ABC123"
               />
             </Field>
             <Field label="Token">
-              <input type="password" className={inputClass} value={token} onChange={(e) => setToken(e.target.value)} autoComplete="new-password" spellCheck={false} />
+              <PasswortFeld value={token} onChange={(e) => setToken(e.target.value)} autoComplete="new-password" />
             </Field>
             {fehler && (
               <p className="flex items-start gap-1.5 text-sm text-red-600" role="alert">
