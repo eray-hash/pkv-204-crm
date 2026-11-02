@@ -98,3 +98,31 @@ lässt sich aus dem Token nicht ableiten, deshalb wählt der Nutzer den Kontotyp
 1. `migrations/20261030000000_verteilung.sql` einspielen.
 2. `migrations/20261030000100_telefonie_neo.sql` einspielen.
 3. `anrufen` und `telefonie-verbinden` neu bündeln (rolldown-Befehl oben) und ersetzen. Keine neuen Secrets.
+
+## Vorläufiges Passwort für Teammitglieder (02.11.2026)
+
+Weil Einladungs- und Reset-Mails (Default-SMTP) bei manchen Anbietern nicht ankommen, kann der Geschäftsführer unter Team → „Passwort festlegen“
+für ein Teammitglied ein vorläufiges Passwort setzen. Die Person muss es beim ersten Login ändern (Seite „Neues Passwort festlegen“, mit
+„Abmelden“-Knopf; erzwungen über `user_metadata.passwort_wechseln`, das beim Ändern auf `false` gesetzt wird).
+
+Edge Function `mitarbeiter-passwort` (`functions/mitarbeiter-passwort/index.ts`, Logik in `functions/_shared/passwort_handler.ts`):
+
+- Eingabe `{ user_id, passwort }`, Antwort nur `{ ok: true }`. Das Passwort wird nie zurückgegeben, geloggt oder in Fehlermeldungen genannt.
+- Aufrufer per Nutzer-JWT ermittelt (deshalb ohne Gateway-JWT-Prüfung, wie `anrufen`); Rolle aus `profiles` über den Service-Client: nur
+  `geschaeftsfuehrer`, sonst 403. Eigene `user_id`: 400 (dafür gibt es Mein Profil → Passwort ändern). Unbekannter Nutzer: 404.
+- Passwortregeln serverseitig: mindestens 12 Zeichen, höchstens 72 Byte (bcrypt; Umlaute zählen doppelt).
+- Setzt per `auth.admin.updateUserById(user_id, { password, email_confirm: true, user_metadata: { passwort_wechseln: true } })`.
+- Rate-Limit: höchstens ein Aufruf je 3 Sekunden und Aufrufer (im Speicher der Funktionsinstanz, jeder Versuch zählt).
+- Protokoll (wer, für wen, wann, ohne Passwortdaten) in `passwort_log`, nur vom Geschäftsführer lesbar; fehlt die Tabelle, funktioniert die
+  Funktion trotzdem (nur ohne Protokollzeile).
+- **Kein neues Secret nötig**: `SUPABASE_URL` und `SUPABASE_SERVICE_ROLE_KEY` stellt Supabase der Funktion automatisch bereit.
+
+Einspielen:
+
+1. Optional `migrations/20261102000000_passwort_log.sql` einspielen (setzt `ist_geschaeftsfuehrer()` aus `20261030000000_verteilung.sql` voraus).
+2. Funktion bündeln und deployen (ohne Gateway-JWT-Prüfung):
+   `node_modules/.bin/rolldown supabase/functions/mitarbeiter-passwort/index.ts -f esm -p neutral -e "jsr:@supabase/supabase-js@2" -o <ziel>.js`
+   bzw. per CLI `supabase functions deploy mitarbeiter-passwort --no-verify-jwt`.
+3. Frontend ist über GitHub Pages bereits ausgeliefert. Ohne deployte Funktion zeigt der Dialog „noch nicht eingerichtet“.
+
+Tests (ohne Netzwerk, gefakte Auth/Datenbank): `functions/_shared/passwort_handler.test.ts`. Nur gegen Fakes geprüft, nie gegen das echte Supabase.

@@ -62,3 +62,21 @@ test('Passwort aendern: Fehlermeldungen sind deutsch und passen zum Passwortwech
   assert.match(mapAuthError({ code: 'session_not_found' }), /erneut anmelden/)
   assert.match(mapAuthError({ message: 'Failed to fetch' }), /Keine Verbindung/)
 })
+
+import { passwortFehlerText, pruefeVorlaeufigesPasswort } from './passwort.ts'
+
+test('Vorlaeufiges Passwort: mindestens 12 Zeichen, hoechstens 72 Byte, Wiederholung muss stimmen', () => {
+  assert.match(pruefeVorlaeufigesPasswort('kurzkurz123', 'kurzkurz123') ?? '', /mindestens 12/)
+  assert.match(pruefeVorlaeufigesPasswort('a'.repeat(73), 'a'.repeat(73)) ?? '', /zu lang/)
+  assert.match(pruefeVorlaeufigesPasswort('ä'.repeat(37), 'ä'.repeat(37)) ?? '', /zu lang/)
+  assert.match(pruefeVorlaeufigesPasswort('zwoelfzeichen', 'andereswort13') ?? '', /stimmen nicht überein/)
+  assert.equal(pruefeVorlaeufigesPasswort('a'.repeat(12), 'a'.repeat(12)), null)
+  assert.equal(pruefeVorlaeufigesPasswort('a'.repeat(72), 'a'.repeat(72)), null)
+})
+
+test('Vorlaeufiges Passwort: Fehlertexte der Funktion werden uebernommen, sonst deutsche Standardtexte', () => {
+  assert.equal(passwortFehlerText(403, { ok: false, fehler: 'Nur der Geschäftsführer darf Passwörter festlegen.' }), 'Nur der Geschäftsführer darf Passwörter festlegen.')
+  assert.match(passwortFehlerText(404, null), /noch nicht eingerichtet/)
+  assert.match(passwortFehlerText(null, null), /Keine Verbindung/)
+  assert.match(passwortFehlerText(500, {}), /später erneut/)
+})

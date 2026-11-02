@@ -18,6 +18,8 @@ interface AuthContextValue {
   profileError: string | null
   /** true, wenn der Nutzer ueber einen Einladungs- oder Passwort-zuruecksetzen-Link kommt: Er muss zuerst ein Passwort festlegen. */
   recovery: boolean
+  /** true, wenn der Geschaeftsfuehrer ein vorlaeufiges Passwort vergeben hat (user_metadata.passwort_wechseln) */
+  passwortVorlaeufig: boolean
   /** Verstaendliche Fehlermeldung, wenn der Link aus der E-Mail abgelaufen/ungueltig war */
   linkFehler: string | null
   signIn: (email: string, password: string) => Promise<string | null>
@@ -36,9 +38,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [profileError, setProfileError] = useState<string | null>(null)
   // Einladung/Recovery: schon beim Start aus der Adresse ermittelt (der Supabase-Client meldet bei Einladungen nur SIGNED_IN)
-  const [recovery, setRecovery] = useState(startPasswortPflicht)
+  const [recoveryZustand, setRecovery] = useState(startPasswortPflicht)
+  // Vorlaeufiges Passwort vom Geschaeftsfuehrer: Pflicht, solange user_metadata.passwort_wechseln gesetzt ist
+  const passwortVorlaeufig = session?.user.user_metadata?.passwort_wechseln === true
+  const recovery = recoveryZustand || passwortVorlaeufig
   const recoveryRef = useRef(recovery)
   recoveryRef.current = recovery
+  const vorlaeufigRef = useRef(passwortVorlaeufig)
+  vorlaeufigRef.current = passwortVorlaeufig
   const linkFehler = startLink?.fehler ?? null
 
   // Sitzung wiederherstellen und auf Aenderungen hoeren (Login, Logout, Token-Erneuerung)
@@ -135,7 +142,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const updatePassword = useCallback(async (password: string) => {
-    const { error } = await supabase.auth.updateUser({ password })
+    // Bei vorlaeufigem Passwort wird das Kennzeichen im selben Schritt zurueckgesetzt
+    const { error } = await supabase.auth.updateUser(vorlaeufigRef.current ? { password, data: { passwort_wechseln: false } } : { password })
     if (error) return mapAuthError(error, 'Das Passwort konnte nicht geändert werden. Bitte erneut versuchen.')
     // Nach Einladung/Link: sauber auf die Startseite; beim normalen Aendern im Profil bleibt der Nutzer dort
     if (recoveryRef.current) {
@@ -153,6 +161,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading: !sessionChecked || (Boolean(userId) && !profile && !profileError),
       profileError,
       recovery,
+      passwortVorlaeufig,
       linkFehler,
       signIn,
       signOut,
@@ -160,7 +169,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       updatePassword,
       updateProfil,
     }),
-    [session, profile, sessionChecked, userId, profileError, recovery, linkFehler, signIn, signOut, sendPasswordReset, updatePassword, updateProfil],
+    [session, profile, sessionChecked, userId, profileError, recovery, passwortVorlaeufig, linkFehler, signIn, signOut, sendPasswordReset, updatePassword, updateProfil],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

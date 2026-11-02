@@ -59,7 +59,19 @@ function Senden({ busy, children }: { busy: boolean; children: ReactNode }) {
   )
 }
 
-export default function Login({ start = 'login', startFehler = null }: { start?: Modus; startFehler?: string | null }) {
+export default function Login({
+  start = 'login',
+  startFehler = null,
+  vorlaeufig = false,
+  abmelden,
+}: {
+  start?: Modus
+  startFehler?: string | null
+  /** Der Geschaeftsfuehrer hat ein vorlaeufiges Passwort vergeben */
+  vorlaeufig?: boolean
+  /** Zeigt auf der Seite "Passwort festlegen" einen Abmelden-Knopf */
+  abmelden?: () => void
+}) {
   const { signIn, sendPasswordReset, updatePassword } = useAuth()
   const [modus, setModus] = useState<Modus>(start)
   const [email, setEmail] = useState('')
@@ -119,7 +131,14 @@ export default function Login({ start = 'login', startFehler = null }: { start?:
 
   if (modus === 'neuesPasswort') {
     return (
-      <Rahmen titel="Neues Passwort festlegen" untertitel="Bitte ein neues Passwort für Ihr Konto vergeben.">
+      <Rahmen
+        titel="Neues Passwort festlegen"
+        untertitel={
+          vorlaeufig
+            ? 'Ihr Passwort wurde vorläufig vergeben. Bitte legen Sie jetzt ein eigenes Passwort fest.'
+            : 'Bitte ein neues Passwort für Ihr Konto vergeben.'
+        }
+      >
         <form onSubmit={neuesSetzen} className="space-y-3" noValidate>
           <Field label="Neues Passwort">
             <PasswortFeld autoComplete="new-password" value={passwort} onChange={(e) => setPasswort(e.target.value)} />
@@ -129,6 +148,11 @@ export default function Login({ start = 'login', startFehler = null }: { start?:
           </Field>
           {fehler && <Fehler text={fehler} />}
           <Senden busy={busy}>Passwort speichern</Senden>
+          {abmelden && (
+            <button type="button" onClick={abmelden} className="block w-full pt-1 text-center text-sm font-medium text-ink-500 hover:text-ink-800">
+              Abmelden
+            </button>
+          )}
         </form>
       </Rahmen>
     )
