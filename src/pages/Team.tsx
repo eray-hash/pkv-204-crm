@@ -97,7 +97,7 @@ export default function Team() {
 
           <ScrollHint />
           <div className="overflow-x-auto rounded-2xl border border-ink-100 bg-white shadow-sm">
-            <table className="w-full min-w-[960px] text-left text-sm">
+            <table className="w-full min-w-[860px] text-left text-sm">
               <thead>
                 <tr className="border-b border-ink-100 text-xs uppercase tracking-wide text-ink-400">
                   <th className="px-4 py-3 font-medium">Mitarbeiter</th>
@@ -107,13 +107,12 @@ export default function Team() {
                   <th className="px-4 py-3 font-medium">Gewonnen</th>
                   <th className="px-4 py-3 font-medium">Einnahmen</th>
                   <th className="px-4 py-3 font-medium">Nicht rausgegangene Anrufe</th>
-                  <th className="px-4 py-3 font-medium">Zugang</th>
                 </tr>
               </thead>
               <tbody>
                 {mitglieder.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="px-4 py-6 text-center text-ink-400">
+                    <td colSpan={7} className="px-4 py-6 text-center text-ink-400">
                       Noch keine Einträge.
                     </td>
                   </tr>
@@ -125,6 +124,11 @@ export default function Team() {
                       <td className="px-4 py-3">
                         <p className="font-medium text-ink-800">{m.name || 'Ohne Namen'}</p>
                         <p className="text-xs text-ink-400">{m.rolle === 'geschaeftsfuehrer' ? 'Geschäftsführer' : 'Mitarbeiter'}</p>
+                        {m.id !== profile?.id && (
+                          <Button variant="secondary" className="mt-2" onClick={() => setPasswortFuer({ id: m.id, name: m.name })}>
+                            <KeyRound size={14} /> Passwort festlegen
+                          </Button>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-ink-600">
                         <Zahl wert={z?.anrufe ?? null} />
@@ -137,13 +141,6 @@ export default function Team() {
                       </td>
                       <td className="px-4 py-3">
                         <NichtErfasst />
-                      </td>
-                      <td className="px-4 py-3">
-                        {m.id !== profile?.id && (
-                          <Button variant="secondary" onClick={() => setPasswortFuer({ id: m.id, name: m.name })}>
-                            <KeyRound size={14} /> Passwort festlegen
-                          </Button>
-                        )}
                       </td>
                     </tr>
                   )
@@ -164,7 +161,6 @@ export default function Team() {
                   <td className="px-4 py-3 font-normal">
                     <NichtErfasst />
                   </td>
-                  <td className="px-4 py-3" />
                 </tr>
               </tfoot>
             </table>
