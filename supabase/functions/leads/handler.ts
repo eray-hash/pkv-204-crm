@@ -26,6 +26,11 @@ const SERVERFEHLER: WebhookAntwort = { status: 500, body: { fehler: 'Interner Fe
  * Postgres-Fehlercodes der Klassen 22 (Datenfehler), 23 (Integritaet/Constraints) und 42 (Format/Typ) sind Fehler der Eingabe:
  * der Lieferant soll sie nicht wiederholen (400). Alles andere ist ein echter Serverfehler (500, Lieferant darf es erneut senden).
  */
+/** Protokolliert bei abgelehnten Anfragen NUR die Namen der fehlerhaften Felder (nie Werte), damit Anbindungsfehler im Funktions-Log sichtbar sind. */
+function logAbgelehnt(fehler: { feld: string }[]): void {
+  console.warn('Lead abgelehnt (400), Felder:', fehler.map((f) => f.feld).join(','))
+}
+
 export function istEingabefehler(code: string | null | undefined): boolean {
   return typeof code === 'string' && /^(22|23)/.test(code)
 }
@@ -84,11 +89,15 @@ export async function behandleLeadAnfrage(req: Request, deps: LeadDeps): Promise
   try {
     body = JSON.parse(gelesen.text)
   } catch {
+    logAbgelehnt([{ feld: '(body)' }])
     return { status: 400, body: { fehler: [{ feld: '(body)', meldung: 'Kein gueltiges JSON' }] } }
   }
 
   const result = validateLead(body, deps.jetzt())
-  if (!result.ok) return { status: 400, body: { fehler: result.fehler } }
+  if (!result.ok) {
+    logAbgelehnt(result.fehler)
+    return { status: 400, body: { fehler: result.fehler } }
+  }
   const v = result.value
 
   let ergebnis: Awaited<ReturnType<LeadDeps['ingest']>>
