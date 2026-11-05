@@ -27,6 +27,10 @@ export type Ergebnis = { ok: true; value: LeadInput } | { ok: false; fehler: Feh
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
 const STEUERZEICHEN = /[\u0000-\u001f\u007f]/
+/** Im Wortlaut der Einwilligung sind Zeilenumbrueche und Tabs erlaubt (echte Texte haben oft Absaetze), alle anderen Steuerzeichen nicht. */
+const STEUERZEICHEN_OHNE_UMBRUCH = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/
+const UMBRUCH_ERLAUBT = new Set(['einwilligung_text'])
+const hatUnzulaessigeZeichen = (key: string, v: string) => (UMBRUCH_ERLAUBT.has(key) ? STEUERZEICHEN_OHNE_UMBRUCH : STEUERZEICHEN).test(v)
 const ISO = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(Z|[+-]\d{2}:\d{2})$/
 
 const TOLERANZ_MS = 5 * 60 * 1000
@@ -103,13 +107,13 @@ export function validateLead(input: unknown, jetzt: Date = new Date()): Ergebnis
   const text = (key: string, melde = true): string | null => {
     const v = o[key]
     if (typeof v !== 'string') return null
-    if (STEUERZEICHEN.test(v)) {
+    if (hatUnzulaessigeZeichen(key, v)) {
       if (melde) fehler.push({ feld: key, meldung: 'Enthaelt unzulaessige Steuerzeichen' })
       return null
     }
     return v.trim()
   }
-  const hatSteuerzeichen = (key: string) => typeof o[key] === 'string' && STEUERZEICHEN.test(o[key] as string)
+  const hatSteuerzeichen = (key: string) => typeof o[key] === 'string' && hatUnzulaessigeZeichen(key, o[key] as string)
   const pflicht = (key: string, meldung: string, ok: (t: string) => boolean): string | null => {
     const t = text(key)
     if (t === null) {

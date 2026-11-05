@@ -106,11 +106,17 @@ test('Trunk-Null nach der Landesvorwahl wird entfernt', () => {
 
 test('Steuerzeichen in Textfeldern werden abgelehnt', () => {
   for (const feld of ['name', 'gesellschaft', 'quelle', 'einwilligung_quelle', 'einwilligung_text', 'lead_id', 'telefon', 'email', 'kanal', 'user_agent']) {
-    const wert = feld === 'telefon' ? '0151\u00001234567' : feld === 'email' ? 'max\n@example.de' : feld === 'einwilligung_text' ? 'Ich willige ein,\ndass mich ein Vermittler anruft.' : `Wert\u0007${feld}`
+    const wert = feld === 'telefon' ? '0151\u00001234567' : feld === 'email' ? 'max\n@example.de' : feld === 'einwilligung_text' ? 'Ich willige ein,\u0007 dass mich ein Vermittler anruft.' : `Wert\u0007${feld}`
     assert.deepEqual(felder({ ...gueltig, [feld]: wert }), [feld], feld)
   }
   assert.deepEqual(felder({ ...gueltig, name: 'Max\tMuster' }), ['name'])
   assert.deepEqual(felder({ ...gueltig, name: 'Max\u007fMuster' }), ['name'])
+})
+
+test('Einwilligungstext: Zeilenumbrueche und Tabs sind erlaubt, Steuerzeichen nicht', () => {
+  const mitUmbruch = 'Ich willige ein,\r\ndass mich ein Vermittler\n\ttelefonisch anruft.'
+  assert.deepEqual(felder({ ...gueltig, einwilligung_text: mitUmbruch }), [])
+  assert.deepEqual(felder({ ...gueltig, einwilligung_text: 'Ich willige ein,\u0000 dass mich ein Vermittler anruft.' }), ['einwilligung_text'])
 })
 
 test('Zeitstempel: Jahr 0000 und unmoegliche Daten werden abgelehnt', () => {
