@@ -8,7 +8,7 @@ export type LeadInput = {
   telefon: string
   email: string
   gesellschaft: string
-  tarifbeitrag: number
+  tarifbeitrag: number | null
   quelle: string | null
   eingangZeit: string
   einwilligungZeit: string
@@ -160,11 +160,15 @@ export function validateLead(input: unknown, jetzt: Date = new Date()): Ergebnis
   const email = pflicht('email', 'Pflichtfeld, gueltige E-Mail-Adresse', (t) => t.length <= 254 && EMAIL.test(t))
   const gesellschaft = pflicht('gesellschaft', 'Pflichtfeld, 2 bis 100 Zeichen', (t) => t.length >= 2 && t.length <= 100)
 
+  // Der Beitrag ist optional (nicht jedes Formular fragt ihn ab); wenn er da ist, muss er stimmen.
   let beitrag: number | null = null
-  if (typeof o.tarifbeitrag === 'number') beitrag = o.tarifbeitrag
-  else if (typeof o.tarifbeitrag === 'string' && /^\d+(\.\d{1,2})?$/.test(o.tarifbeitrag.trim())) beitrag = Number(o.tarifbeitrag.trim())
-  if (beitrag === null || !Number.isFinite(beitrag) || beitrag < 1 || beitrag > 10000) {
-    fehler.push({ feld: 'tarifbeitrag', meldung: 'Pflichtfeld, Zahl in Euro zwischen 1 und 10000' })
+  if (o.tarifbeitrag !== undefined && o.tarifbeitrag !== null && o.tarifbeitrag !== '') {
+    if (typeof o.tarifbeitrag === 'number') beitrag = o.tarifbeitrag
+    else if (typeof o.tarifbeitrag === 'string' && /^\d+(\.\d{1,2})?$/.test(o.tarifbeitrag.trim())) beitrag = Number(o.tarifbeitrag.trim())
+    if (beitrag === null || !Number.isFinite(beitrag) || beitrag < 1 || beitrag > 10000) {
+      beitrag = null
+      fehler.push({ feld: 'tarifbeitrag', meldung: 'Zahl in Euro zwischen 1 und 10000 (oder weglassen)' })
+    }
   }
 
   // Zeitstempel: eingang_zeit nicht aelter als 30 Tage und nicht in der Zukunft (5 Minuten Toleranz);
@@ -236,7 +240,7 @@ export function validateLead(input: unknown, jetzt: Date = new Date()): Ergebnis
       telefon: telefon!,
       email: email!,
       gesellschaft: gesellschaft!,
-      tarifbeitrag: beitrag!,
+      tarifbeitrag: beitrag,
       quelle,
       eingangZeit: eingangZeit!,
       einwilligungZeit: einwilligungZeit!,

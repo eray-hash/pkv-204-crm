@@ -1,6 +1,7 @@
 // Ablauf des Lead-Webhooks ohne Deno/Supabase-Abhaengigkeiten (Zugriffe kommen als "deps"), damit er per `node --test` pruefbar ist.
 import { bearerToken, leseBegrenzterBody } from '../_shared/http.ts'
 import { validateLead } from './validate.ts'
+import { normalisiereEingang, type Standardwerte } from './normalisiere.ts'
 
 export const MAX_BODY_BYTES = 16 * 1024
 
@@ -9,7 +10,7 @@ export interface LeadDeps {
   /** SHA-256 als Hex (WebCrypto) */
   sha256Hex: (s: string) => Promise<string>
   /** Sucht den aktiven API-Schluessel zum Hash; wirft bei Datenbankfehlern */
-  findeKey: (keyHash: string) => Promise<{ id: string; ist_test: boolean } | null>
+  findeKey: (keyHash: string) => Promise<{ id: string; ist_test: boolean; standard?: Standardwerte | null } | null>
   /** Ruft public.ingest_lead auf; liefert das Ergebnis oder den Fehlercode (nie die Fehlermeldung von Postgres) */
   ingest: (params: Record<string, unknown>) => Promise<{ data: { o_lead_id: string; o_neu_angelegt: boolean }[] | null; fehlercode: string | null }>
   /**
@@ -74,7 +75,7 @@ export async function behandleLeadAnfrage(req: Request, deps: LeadDeps): Promise
   const token = bearerToken(req.headers.get('authorization'))
   if (!token) return NICHT_AUTHORISIERT
 
-  let key: { id: string; ist_test: boolean } | null
+  let key: { id: string; ist_test: boolean; standard?: Standardwerte | null } | null
   try {
     key = await deps.findeKey(await deps.sha256Hex(token))
   } catch {
@@ -108,7 +109,9 @@ export async function behandleLeadAnfrage(req: Request, deps: LeadDeps): Promise
     return { status: 400, body: { fehler: [{ feld: '(body)', meldung: 'Kein gueltiges JSON' }] } }
   }
 
-  const result = validateLead(body, deps.jetzt())
+  const hatStandard = !!key.standard && Object.values(key.standard).some((w) => w !== null && w !== undefined)
+  const normalisiert = await normalisiereEingang(body, key.standard, deps.jetzt())
+  const result = validateLead(normalisiert, deps.jetzt())
   if (!result.ok) {
     await merkeTestEingang(`Felder: ${result.fehler.map((f) => f.feld).join(',')}`)
     logAbgelehnt(result.fehler)
@@ -134,7 +137,7 @@ export async function behandleLeadAnfrage(req: Request, deps: LeadDeps): Promise
       p_einwilligung_ip: v.einwilligungIp,
       p_ist_test: key.ist_test,
       p_text_sha256: await deps.sha256Hex(v.einwilligungText),
-      p_payload_roh: bereinigeRohbody(body),
+      p_payload_roh: hatStandard ? { ...(bereinigeRohbody(normalisiert) as object), _original: body } : bereinigeRohbody(body),
       p_einwilligung_version: v.einwilligungVersion,
       p_kanal: v.kanal,
       p_begunstigter: v.begunstigter,

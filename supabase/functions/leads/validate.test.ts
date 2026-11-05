@@ -45,7 +45,7 @@ test('fehlende Pflichtfelder werden einzeln gemeldet', () => {
     const felder = r.fehler.map((f) => f.feld).sort()
     assert.deepEqual(felder, [
       'eingang_zeit', 'einwilligung_quelle', 'einwilligung_text', 'einwilligung_zeit',
-      'email', 'gesellschaft', 'lead_id', 'name', 'tarifbeitrag', 'telefon',
+      'email', 'gesellschaft', 'lead_id', 'name', 'telefon',
     ])
   }
 })

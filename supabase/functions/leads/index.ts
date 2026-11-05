@@ -17,12 +17,25 @@ Deno.serve(async (req: Request) => {
     jetzt: () => new Date(),
     sha256Hex,
     async findeKey(keyHash) {
-      const { data, error } = await supabase.from('api_keys').select('id, ist_test').eq('key_hash', keyHash).eq('aktiv', true).maybeSingle()
+      const { data, error } = await supabase.from('api_keys').select('id, ist_test, standard_einwilligung_text, standard_einwilligung_quelle, standard_kanal, standard_begunstigter, standard_rufnummer_verifiziert, standard_gesellschaft, standard_zeit_ist_eingang').eq('key_hash', keyHash).eq('aktiv', true).maybeSingle()
       if (error) {
         console.error('api_keys lookup fehlgeschlagen:', error.code ?? '')
         throw new Error('api_keys')
       }
-      return data ?? null
+      if (!data) return null
+      return {
+        id: data.id,
+        ist_test: data.ist_test,
+        standard: {
+          einwilligung_text: data.standard_einwilligung_text,
+          einwilligung_quelle: data.standard_einwilligung_quelle,
+          kanal: data.standard_kanal,
+          begunstigter: data.standard_begunstigter,
+          rufnummer_verifiziert: data.standard_rufnummer_verifiziert,
+          gesellschaft: data.standard_gesellschaft,
+          einwilligung_zeit_ist_eingang: data.standard_zeit_ist_eingang,
+        },
+      }
     },
     async speichereTestEingang(eintrag) {
       const { error } = await supabase.from('webhook_test_eingang').insert(eintrag)
