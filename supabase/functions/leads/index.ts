@@ -24,6 +24,10 @@ Deno.serve(async (req: Request) => {
       }
       return data ?? null
     },
+    async speichereTestEingang(eintrag) {
+      const { error } = await supabase.from('webhook_test_eingang').insert(eintrag)
+      if (error) console.error('Test-Eingang speichern fehlgeschlagen:', error.code ?? '')
+    },
     async ingest(params) {
       const { data, error } = await supabase.rpc('ingest_lead', params)
       return { data: (data as { o_lead_id: string; o_neu_angelegt: boolean }[] | null) ?? null, fehlercode: error ? (error.code ?? 'unbekannt') : null }

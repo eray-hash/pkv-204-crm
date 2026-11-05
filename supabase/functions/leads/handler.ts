@@ -12,6 +12,11 @@ export interface LeadDeps {
   findeKey: (keyHash: string) => Promise<{ id: string; ist_test: boolean } | null>
   /** Ruft public.ingest_lead auf; liefert das Ergebnis oder den Fehlercode (nie die Fehlermeldung von Postgres) */
   ingest: (params: Record<string, unknown>) => Promise<{ data: { o_lead_id: string; o_neu_angelegt: boolean }[] | null; fehlercode: string | null }>
+  /**
+   * Nur fuer TEST-Schluessel: bewahrt eine abgelehnte Anfrage unveraendert auf (Anbindung pruefen, wenn der Lieferant die Antwort
+   * seines Systems nicht sehen kann). Fehler hier duerfen die Antwort nie veraendern.
+   */
+  speichereTestEingang?: (eintrag: { api_key_id: string; grund: string; rohtext: string }) => Promise<void>
 }
 
 export interface WebhookAntwort {
@@ -85,16 +90,27 @@ export async function behandleLeadAnfrage(req: Request, deps: LeadDeps): Promise
       : { status: 400, body: { fehler: [{ feld: '(header)', meldung: 'Ungueltiger Content-Length-Header' }] } }
   }
 
+  const merkeTestEingang = async (grund: string) => {
+    if (!key.ist_test || !deps.speichereTestEingang) return
+    try {
+      await deps.speichereTestEingang({ api_key_id: key.id, grund, rohtext: gelesen.text })
+    } catch {
+      // Die Aufbewahrung ist nur eine Hilfe zur Fehlersuche und darf die Antwort nicht beeinflussen
+    }
+  }
+
   let body: unknown
   try {
     body = JSON.parse(gelesen.text)
   } catch {
+    await merkeTestEingang('Kein gueltiges JSON')
     logAbgelehnt([{ feld: '(body)' }])
     return { status: 400, body: { fehler: [{ feld: '(body)', meldung: 'Kein gueltiges JSON' }] } }
   }
 
   const result = validateLead(body, deps.jetzt())
   if (!result.ok) {
+    await merkeTestEingang(`Felder: ${result.fehler.map((f) => f.feld).join(',')}`)
     logAbgelehnt(result.fehler)
     return { status: 400, body: { fehler: result.fehler } }
   }
