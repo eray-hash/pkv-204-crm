@@ -26,6 +26,7 @@ import {
   ageInDays,
   anrufPruefung,
   CLOSING_STATUS,
+  GESCHUETZTE_STATUS,
   leadZugriff,
   PIPELINE_STATUS,
   STATUS_LABEL,
@@ -223,9 +224,10 @@ export default function LeadDetail() {
     else showToast(nichtOkText, 'info')
   }
   const abgeschlossen = CLOSING_STATUS.includes(lead.status)
-  // Gesperrte Leads kann nur der Geschaeftsfuehrer aendern (Statuswaechter in der Datenbank)
+  // Gesperrte und abgeschlossene Leads (auch verloren/gewonnen) kann nur der Geschaeftsfuehrer zurueckdrehen (Statuswaechter in der Datenbank)
   const gesperrtBlockiert = Boolean(lead.gesperrt_am) && !istGF
-  const kannBearbeiten = z.darfBearbeiten && !gesperrtBlockiert
+  const statusGeschuetzt = GESCHUETZTE_STATUS.includes(lead.status) && !istGF
+  const kannBearbeiten = z.darfBearbeiten && !gesperrtBlockiert && !statusGeschuetzt
   const anrufbar = anrufPruefung(lead, zusatzGeladen ? (zusatz.einwilligung?.einwilligung_zeit ?? null) : undefined, meId)
 
   // tel:-Link: freien Lead uebernehmen, Anruf protokollieren, erst dann waehlen (wie im Power Dialer). Bei Ablehnung wird nicht gewaehlt.
@@ -302,7 +304,7 @@ export default function LeadDetail() {
             </a>
             <DbStatusBadge status={lead.status} />
             {lead.gesperrt_am && <Badge tone="red">Gesperrt</Badge>}
-            {lead.moegliches_duplikat_von && (
+            {lead.moegliches_duplikat_von && leads.some((l) => l.id === lead.moegliches_duplikat_von) && (
               <Link to={`/leads/${lead.moegliches_duplikat_von}`}>
                 <Badge tone="amber">Mögliches Duplikat – ursprünglichen Lead öffnen</Badge>
               </Link>
@@ -381,15 +383,15 @@ export default function LeadDetail() {
               ) : (
                 <Button
                   variant="danger"
-                  disabled={verteilungBusy || (z.bearbeiter !== 'ich' && !istGF)}
-                  title={z.bearbeiter !== 'ich' && !istGF ? 'Zum Sperren muss der Lead Ihnen gehören (zuerst übernehmen).' : undefined}
+                  disabled={verteilungBusy || (z.bearbeiter === 'andere' && !istGF)}
+                  title={z.bearbeiter === 'andere' && !istGF ? 'Dieser Lead gehört jemand anderem: Nur der Besitzer oder der Geschäftsführer kann ihn sperren.' : undefined}
                   onClick={() => setSperrDialog(true)}
                 >
                   <Ban size={15} /> Widerruf / nicht mehr anrufen
                 </Button>
               )}
-              {!lead.gesperrt_am && z.bearbeiter !== 'ich' && !istGF && (
-                <p className="mt-1.5 text-xs text-ink-400">Zum Sperren muss der Lead Ihnen gehören (zuerst übernehmen).</p>
+              {!lead.gesperrt_am && z.bearbeiter === 'andere' && !istGF && (
+                <p className="mt-1.5 text-xs text-ink-400">Nur der Besitzer oder der Geschäftsführer kann diesen Lead sperren.</p>
               )}
             </div>
             {z.darfZuweisen && (
@@ -472,6 +474,9 @@ export default function LeadDetail() {
               </Button>
             </div>
             {abgeschlossen && <p className="mt-2 text-xs text-ink-400">Dieser Lead ist abgeschlossen und wird nicht mehr angerufen.</p>}
+            {statusGeschuetzt && !gesperrtBlockiert && (
+              <p className="mt-2 text-xs text-ink-500">Der Status ist abgeschlossen. Nur der Geschäftsführer kann ihn wieder ändern.</p>
+            )}
 
             <div className="mt-5 grid grid-cols-2 gap-4 border-t border-ink-100 pt-4 sm:grid-cols-4">
               <Info label="Gesellschaft" wert={lead.gesellschaft} />

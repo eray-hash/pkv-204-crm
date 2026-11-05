@@ -105,7 +105,7 @@ export default function Dashboard() {
               <div className="mb-3 flex items-center gap-2">
                 <TrendingUp size={18} className="text-brand-500" />
                 <h2 className="font-semibold text-ink-800">Pipeline-Übersicht</h2>
-                <span className="text-xs text-ink-400">(alle Leads, unabhängig vom Zeitraum)</span>
+                <span className="text-xs text-ink-400">({profile?.rolle === 'geschaeftsfuehrer' ? 'alle Leads' : 'freie und eigene Leads'}, unabhängig vom Zeitraum)</span>
               </div>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                 {PIPELINE.map((status) => (

@@ -13,7 +13,7 @@ import {
   updateLeadRow,
   type VerteilungsErgebnis,
 } from '../lib/leadsApi'
-import { dialerReihenfolge, fuehreZusammen, mapLeadRow, queueFuerNutzer, upsertLead, type DbLead, type LeadPatch } from '../lib/leads'
+import { dialerReihenfolge, fuehreZusammen, fuerMitarbeiterSichtbar, mapLeadRow, queueFuerNutzer, upsertLead, type DbLead, type LeadPatch } from '../lib/leads'
 import { effektivOnline } from '../lib/praesenz'
 import { spieleBenachrichtigungston } from '../lib/ton'
 import { useToast } from '../components/ToastContext'
@@ -164,8 +164,8 @@ export function LeadsProvider({ children }: { children: ReactNode }) {
         if (!lead || lead.ist_test) return
         const ich = profilRef.current
         const istGF = ich?.rolle === 'geschaeftsfuehrer'
-        // Mitarbeiter sehen nur freie und eigene Leads: gehoert der Lead jetzt jemand anderem, verschwindet er aus der Sicht
-        if (!istGF && lead.zugewiesen_an !== null && lead.zugewiesen_an !== meRef.current) {
+        // Mitarbeiter sehen nur eigene und freie, uebernehmbare Leads (wie die Datenbank-Policy): sonst verschwindet der Lead aus der Sicht
+        if (!istGF && !fuerMitarbeiterSichtbar(lead, meRef.current)) {
           setLeads((prev) => prev.filter((l) => l.id !== lead.id))
           planeQueue()
           return
@@ -173,7 +173,8 @@ export function LeadsProvider({ children }: { children: ReactNode }) {
         lokalGeaendert.current.set(lead.id, Date.now())
         setLeads((prev) => upsertLead(prev, lead))
         // Hinweis (Toast und Ton) nur bei neuen, freien Live-Leads und wenn ich effektiv online bin
-        if (payload.eventType === 'INSERT' && lead.ist_live && lead.zugewiesen_an === null && ich && effektivOnline(ich, new Date())) {
+        // nur fuer wirklich neue, freie, nicht gesperrte Leads
+        if (payload.eventType === 'INSERT' && lead.ist_live && lead.zugewiesen_an === null && lead.status === 'neu' && !lead.gesperrt_am && ich && effektivOnline(ich, new Date())) {
           toastRef.current(`Neuer Live-Lead: ${lead.name} (${lead.gesellschaft})`)
           spieleBenachrichtigungston()
         }

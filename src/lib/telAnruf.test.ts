@@ -43,6 +43,15 @@ test('tel-Anruf: Lead eines anderen, gescheiterte Uebernahme oder abgelehntes Pr
   assert.equal(r.ok, false)
   assert.ok(r.ok === false && /jemand anderem/.test(r.meldung))
 
+  // N5: noch frei, aber nicht uebernehmbar -> andere Meldung als "vergeben"
+  a = aufbau({ uebernehmen: async () => ({ ok: false, fehler: null }), refreshLead: async () => ({ zugewiesen_an: null } as DbLead) })
+  r = await bereiteTelAnrufVor({ id: 'l', zugewiesen_an: null }, 'festnetz', a.deps)
+  assert.ok(r.ok === false && /nicht übernommen werden/.test(r.meldung) && !/jemand anderem/.test(r.meldung))
+  // nicht mehr sichtbar (null) gilt als vergeben
+  a = aufbau({ uebernehmen: async () => ({ ok: false, fehler: null }), refreshLead: async () => null })
+  r = await bereiteTelAnrufVor({ id: 'l', zugewiesen_an: null }, 'festnetz', a.deps)
+  assert.ok(r.ok === false && /jemand anderem/.test(r.meldung))
+
   a = aufbau({ logAnruf: async () => 'Dieser Lead wurde gerade erst angerufen.' })
   r = await bereiteTelAnrufVor({ id: 'l', zugewiesen_an: 'me' }, 'festnetz', a.deps)
   assert.deepEqual(r, { ok: false, meldung: 'Dieser Lead wurde gerade erst angerufen.' })

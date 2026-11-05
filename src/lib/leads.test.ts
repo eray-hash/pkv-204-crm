@@ -13,6 +13,9 @@ import {
   leadZugriff,
   anrufProtokollFehler,
   fuehreZusammen,
+  fuerMitarbeiterSichtbar,
+  GESCHUETZTE_STATUS,
+  CLOSING_STATUS,
   upsertLead,
   anrufPruefung,
   dialerReihenfolge,
@@ -296,6 +299,8 @@ test('verteilungsFehler: deutsche Meldungen', () => {
 })
 
 test('Anruf protokollieren: deutsche Meldungen fuer Limits, Ablehnung und technische Fehler', () => {
+  assert.match(anrufProtokollFehler({ code: 'PT429', message: 'anruf_limit:lead_limit' }), /10 Minuten/)
+  assert.match(anrufProtokollFehler({ message: 'anruf_limit:nutzer_limit' }), /30 Anrufen pro Stunde/)
   assert.match(anrufProtokollFehler({ code: '53400', message: 'anruf_limit:lead_limit' }), /10 Minuten/)
   assert.match(anrufProtokollFehler({ code: '53400', message: 'anruf_limit:nutzer_limit' }), /30 Anrufen pro Stunde/)
   assert.match(anrufProtokollFehler({ code: '53400', message: 'anruf_limit:abstand' }), /einen Moment/)
@@ -306,6 +311,11 @@ test('Anruf protokollieren: deutsche Meldungen fuer Limits, Ablehnung und techni
 
 test('Lead uebernehmen: Obergrenze offener Leads wird verstaendlich gemeldet', () => {
   assert.match(verteilungsFehler({ code: '53400', message: 'Obergrenze fuer offene eigene Leads erreicht' }), /maximale Zahl offener eigener Leads/)
+  // PostgREST: SQLSTATE PT429 (HTTP 429); auch nur am Text erkennbar
+  const limit = verteilungsFehler({ code: 'PT429', message: 'limit_offene_leads: Obergrenze fuer offene eigene Leads erreicht' })
+  assert.match(limit, /maximale Zahl/)
+  assert.match(limit, /abschließen oder freigeben/)
+  assert.match(verteilungsFehler({ message: 'limit_offene_leads: ...' }), /maximale Zahl/)
   assert.match(verteilungsFehler({ code: '42501' }), /Geschäftsführer/)
 })
 
@@ -397,4 +407,23 @@ test('Sperrgrund: Auswahl und Freitext, "Sonstiges" braucht eine Angabe, Laenge 
   assert.equal(sperrGrundText('sonstiges', '  '), null)
   assert.equal(sperrGrundText('sonstiges', 'Anwalt hat geschrieben'), 'Sonstiges: Anwalt hat geschrieben')
   assert.equal(sperrGrundText('sonstiges', 'x'.repeat(600))?.length, 500)
+})
+
+test('Geschuetzte Status und Sichtbarkeit stimmen mit der Migration ueberein', async () => {
+  const { readFileSync } = await import('node:fs')
+  const sql = readFileSync(new URL('../../supabase/migrations/20261103000200_qa_nachpruefung.sql', import.meta.url), 'utf8')
+  const m = /function public\.geschuetzte_status\(\) returns text\[\][\s\S]*?array\[([^\]]*)\]/.exec(sql)
+  assert.ok(m)
+  assert.deepEqual(m![1].split(',').map((x) => x.trim().replace(/'/g, '')), GESCHUETZTE_STATUS)
+  assert.deepEqual([...CLOSING_STATUS, 'gewonnen'].sort(), [...GESCHUETZTE_STATUS].sort())
+})
+
+test('Sichtbarkeit fuer Mitarbeiter: freie Leads nur uebernehmbar, nicht gesperrt, kein Test; eigene immer', () => {
+  const frei = (over = {}) => lead({ zugewiesen_an: null, ...over })
+  assert.equal(fuerMitarbeiterSichtbar(frei(), 'me'), true)
+  for (const st of ['termin_vereinbart', 'beratung', 'kein_interesse', 'gewonnen'] as const) assert.equal(fuerMitarbeiterSichtbar(frei({ status: st }), 'me'), false, st)
+  assert.equal(fuerMitarbeiterSichtbar(frei({ gesperrt_am: '2026-11-03T10:00:00Z' }), 'me'), false)
+  assert.equal(fuerMitarbeiterSichtbar(frei({ ist_test: true }), 'me'), false)
+  assert.equal(fuerMitarbeiterSichtbar(lead({ zugewiesen_an: 'me', status: 'beratung' }), 'me'), true)
+  assert.equal(fuerMitarbeiterSichtbar(lead({ zugewiesen_an: 'andere' }), 'me'), false)
 })

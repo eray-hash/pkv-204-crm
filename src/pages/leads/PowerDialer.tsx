@@ -9,7 +9,7 @@ import { Badge, Button, Card, ErrorBlock, LoadingBlock, SectionHeader, inputClas
 import SperrDialog from '../../components/SperrDialog'
 import { addNotiz, fetchNotizen, fetchQueue, logAnruf, type Notiz } from '../../lib/leadsApi'
 import { anrufenSipgate, telefonieStatus as ladeTelefonieStatus } from '../../lib/telefonieApi'
-import { sollAufTelFallen } from '../../lib/telefonie'
+import { anrufAusgangUnklar, sollAufTelFallen } from '../../lib/telefonie'
 import {
   ageInDays,
   dialerPatch,
@@ -36,7 +36,7 @@ const ABSCHLUSS_TEXT: Partial<Record<DialerErgebnis, string>> = {
 
 export default function PowerDialer() {
   const { session } = useAuth()
-  const { leads, queue, loading, queueError, reload, updateLead, uebernehmen, refreshLead, sperren } = useLeads()
+  const { leads, queue, loading, queueError, reload, updateLead, uebernehmen, refreshLead, sperren, freigeben } = useLeads()
   const meId = session?.user.id ?? null
   const { showToast } = useToast()
   const navigate = useNavigate()
@@ -59,6 +59,8 @@ export default function PowerDialer() {
   // Sperrt die tel:-Links waehrend Uebernahme/Protokoll laufen (kein doppelter Anruf-Eintrag bei Doppelklick)
   const [telBusy, setTelBusy] = useState(false)
   const [mobilFehler, setMobilFehler] = useState<string | null>(null)
+  // true, wenn der Ausgang des Anrufs unklar ist (der Anruf wurde moeglicherweise gestartet)
+  const [mobilUnklar, setMobilUnklar] = useState(false)
   const [busy, setBusy] = useState(false)
   const [spaeterOffen, setSpaeterOffen] = useState(false)
   const [spaeterWert, setSpaeterWert] = useState(() => morgenFrueh(new Date(), eingabeZeitzone()))
@@ -111,18 +113,21 @@ export default function PowerDialer() {
     setNotiz('')
     setAngerufen(null)
     setMobilFehler(null)
+    setMobilUnklar(false)
     setSpaeterOffen(false)
     setBestaetige(null)
     setVorherige([])
     if (!aktuellId) return
     let aktiv = true
+    // Beim Wechsel zum Lead kurz den aktuellen Stand holen (zwischenzeitlich vergeben, gesperrt oder abgeschlossen?)
+    void refreshLead(aktuellId)
     void fetchNotizen(aktuellId).then((res) => {
       if (aktiv && res.data) setVorherige(res.data)
     })
     return () => {
       aktiv = false
     }
-  }, [aktuellId])
+  }, [aktuellId, refreshLead])
 
   // Neue Leads seit dem Start der Runde (live per Realtime): freie zuerst, neueste zuerst
   const neueLeads = useMemo(() => {
@@ -174,7 +179,19 @@ export default function PowerDialer() {
     // ok=false: entweder schon vergeben oder (selten) schon mein Lead
     const neu = await refreshLead(lead.id)
     if (neu && neu.zugewiesen_an === meId) return true
-    showToast('Dieser Lead wurde inzwischen von jemand anderem übernommen.', 'info')
+    if (neu && neu.zugewiesen_an === null) {
+      showToast('Dieser Lead kann nicht übernommen werden (gesperrt oder in einem Status, den nur der Geschäftsführer zuweisen kann).', 'info')
+    } else {
+      showToast('Dieser Lead wurde inzwischen von jemand anderem übernommen.', 'info')
+    }
+    return false
+  }
+
+  // Vor dem Anruf den Lead frisch pruefen: ist er noch anrufbar (nicht vergeben, gesperrt, abgeschlossen)?
+  async function frischAnrufbar(lead: DbLead): Promise<boolean> {
+    const frisch = await refreshLead(lead.id)
+    if (frisch && nochImDialerAnrufbar(frisch, true, meId)) return true
+    showToast('Dieser Lead ist nicht mehr anrufbar (inzwischen vergeben, gesperrt oder abgeschlossen).', 'info')
     return false
   }
 
@@ -186,6 +203,7 @@ export default function PowerDialer() {
     const href = e.currentTarget.href
     setTelBusy(true)
     try {
+      if (!(await frischAnrufbar(aktuell))) return
       const res = await bereiteTelAnrufVor(aktuell, kanal, { meId, uebernehmen, refreshLead, logAnruf })
       if (!res.ok) {
         showToast(res.meldung, 'info')
@@ -205,7 +223,12 @@ export default function PowerDialer() {
     if (!aktuell || mobilBusy) return
     setMobilBusy(true)
     setMobilFehler(null)
+    setMobilUnklar(false)
     setAngerufen(null)
+    if (!(await frischAnrufbar(aktuell))) {
+      setMobilBusy(false)
+      return
+    }
     const res = await anrufenSipgate(aktuell.id)
     setMobilBusy(false)
     if (res.error) {
@@ -217,6 +240,7 @@ export default function PowerDialer() {
         showToast('Telefonie nicht verbunden (Mein Profil → Telefonie). „Mobil“ nutzt jetzt die Telefon-Anwendung.', 'info')
       } else {
         setMobilFehler(res.error)
+        setMobilUnklar(anrufAusgangUnklar(res.code))
       }
       return
     }
@@ -265,15 +289,26 @@ export default function PowerDialer() {
     if (ok && notiz.trim()) showToast('Notiz gespeichert')
   }
 
-  // Widerruf / nicht mehr anrufen: ein freier Lead wird dafuer zuerst uebernommen (nur der Besitzer oder der Geschaeftsfuehrer darf sperren)
+  // Eigenen Lead zurueck in den Pool geben (schafft Platz unter der Obergrenze offener Leads) und zum naechsten Lead weitergehen
+  async function gibFrei() {
+    if (!aktuell) return
+    setBusy(true)
+    const res = await freigeben(aktuell.id)
+    setBusy(false)
+    if (res.fehler || !res.ok) {
+      showToast(res.fehler ?? 'Der Lead konnte nicht freigegeben werden.', 'info')
+      return
+    }
+    showToast(`${aktuell.name} freigegeben`)
+    setBearbeitet((prev) => new Set(prev).add(aktuell.id))
+    setIndex(aktuellIndex + 1)
+  }
+
+  // Widerruf / nicht mehr anrufen (frei: jeder; zugewiesen: Besitzer oder Geschaeftsfuehrer)
   async function sperreAktuellen(grund: string) {
     if (!aktuell) return
     setBusy(true)
-    if (aktuellFrei && !(await sichereUebernahme(aktuell, true))) {
-      setBusy(false)
-      setSperrDialog(false)
-      return
-    }
+    // Freie Leads kann jeder ohne vorherige Uebernahme sperren (keine Abhaengigkeit von der Obergrenze offener Leads)
     const res = await sperren(aktuell.id, grund)
     setBusy(false)
     setSperrDialog(false)
@@ -462,7 +497,7 @@ export default function PowerDialer() {
         <div className="flex flex-wrap items-center justify-center gap-2 text-center">
           <Badge tone={statusTone(aktuell.status)}>{statusLabel(aktuell.status)}</Badge>
           {aktuellFrei ? <Badge tone="green">Neu, frei</Badge> : <Badge tone="brand">Mein Lead</Badge>}
-          {aktuell.moegliches_duplikat_von && (
+          {aktuell.moegliches_duplikat_von && leads.some((l) => l.id === aktuell.moegliches_duplikat_von) && (
             <Link to={`/leads/${aktuell.moegliches_duplikat_von}`}>
               <Badge tone="amber">Mögliches Duplikat – ursprünglichen Lead öffnen</Badge>
             </Link>
@@ -568,7 +603,7 @@ export default function PowerDialer() {
           <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
             {mobilFehler}{' '}
             <a href={telHref(aktuell.telefon)} onClick={(e) => void telKlick(e, 'mobil')} className="font-medium underline">
-              Stattdessen mit der Telefon-Anwendung anrufen
+              {mobilUnklar ? 'Trotzdem mit der Telefon-Anwendung wählen' : 'Stattdessen mit der Telefon-Anwendung anrufen'}
             </a>
           </p>
         )}
@@ -642,10 +677,15 @@ export default function PowerDialer() {
               Schon umgestellt
             </Button>
           </div>
-          <div className="mt-3">
+          <div className="mt-3 space-y-2">
             <Button variant="ghost" className="w-full justify-center border border-red-200 text-red-700 hover:bg-red-50" disabled={busy} onClick={() => setSperrDialog(true)}>
               <Ban size={16} /> Widerruf / nicht mehr anrufen
             </Button>
+            {!aktuellFrei && (
+              <Button variant="ghost" className="w-full justify-center border border-ink-200" disabled={busy} onClick={() => void gibFrei()}>
+                Lead freigeben (zurück an das Team)
+              </Button>
+            )}
           </div>
 
           {spaeterOffen && (

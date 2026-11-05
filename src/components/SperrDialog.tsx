@@ -27,7 +27,7 @@ export default function SperrDialog({
   }
 
   return (
-    <Modal open onClose={busy ? () => undefined : onClose} title="Widerruf / nicht mehr anrufen">
+    <Modal open onClose={busy ? () => undefined : onClose} busy={busy} title="Widerruf / nicht mehr anrufen">
       <form onSubmit={absenden} className="space-y-3">
         <p className="text-sm text-ink-600">
           „{leadName}“ wird gesperrt und nie wieder angerufen. Die Rufnummer kommt auf die Sperrliste, weitere Leads mit derselben Nummer werden ebenfalls gesperrt.

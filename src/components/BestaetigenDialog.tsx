@@ -19,7 +19,7 @@ export default function BestaetigenDialog({
   onClose: () => void
 }) {
   return (
-    <Modal open onClose={busy ? () => undefined : onClose} title={titel}>
+    <Modal open onClose={busy ? () => undefined : onClose} busy={busy} title={titel}>
       <p className="text-sm text-ink-600">{text}</p>
       <div className="mt-5 flex justify-end gap-2">
         <Button variant="secondary" onClick={onClose} disabled={busy}>

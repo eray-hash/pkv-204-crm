@@ -39,6 +39,12 @@ export const LOST_STATUS: DbLeadStatus[] = ['verloren', 'verstorben', 'nicht_meh
 /** Status, mit denen ein Lead endgueltig abgeschlossen wird (er wird nie wieder angerufen). */
 export const CLOSING_STATUS: DbLeadStatus[] = ['kein_interesse', 'verstorben', 'nicht_mehr_pkv', 'schon_umgestellt', 'verloren']
 
+/**
+ * Status, aus denen ein Nicht-Geschaeftsfuehrer einen Lead nicht mehr herausholen darf (Statuswaechter, SQL: public.geschuetzte_status()):
+ * die abschliessenden Status plus "gewonnen". Auf diese Status SETZEN darf jeder Bearbeiter (normaler Abschluss).
+ */
+export const GESCHUETZTE_STATUS: DbLeadStatus[] = ['verstorben', 'nicht_mehr_pkv', 'kein_interesse', 'schon_umgestellt', 'verloren', 'gewonnen']
+
 /** Schritte der Bearbeitungs-Pipeline. */
 export const PIPELINE_STATUS: DbLeadStatus[] = ['neu', 'kontaktiert', 'nicht_erreicht', 'termin_vereinbart', 'beratung', 'gewonnen']
 
@@ -295,6 +301,15 @@ export function leadZugriff(lead: Pick<DbLead, 'zugewiesen_an' | 'status' | 'ist
   }
 }
 
+/**
+ * Sieht ein Mitarbeiter diesen Lead (wie die Zeilen-Policy leads_select)? Freie Leads nur in uebernehmbarem Status, nicht gesperrt und kein
+ * Testlead; eigene Leads immer. Der Geschaeftsfuehrer sieht alles.
+ */
+export function fuerMitarbeiterSichtbar(lead: Pick<DbLead, 'zugewiesen_an' | 'status' | 'gesperrt_am' | 'ist_test'>, meId: string | null): boolean {
+  if (lead.zugewiesen_an !== null) return lead.zugewiesen_an === meId
+  return !lead.ist_test && !lead.gesperrt_am && UEBERNAHME_STATUS.includes(lead.status)
+}
+
 export type ZuweisungsFilter = 'alle' | 'frei' | 'meine'
 
 export function filterZuweisung(leads: DbLead[], filter: ZuweisungsFilter, meId: string | null): DbLead[] {
@@ -383,8 +398,9 @@ export function verteilungsFehler(err: { code?: string | null; message?: string 
   if (code === 'PGRST202' || code === '42883' || msg.includes('could not find the function')) {
     return 'Die Lead-Verteilung ist serverseitig noch nicht eingerichtet.'
   }
-  if (code === '53400' || msg.includes('obergrenze')) {
-    return 'Sie haben bereits die maximale Zahl offener eigener Leads (50). Bitte zuerst Leads abarbeiten oder freigeben.'
+  // PostgREST liefert die Obergrenze als SQLSTATE PT429 (HTTP 429); aeltere Stande als 53400. Zusaetzlich am Meldungstext erkennbar.
+  if (code === 'PT429' || code === '53400' || msg.includes('limit_offene_leads') || msg.includes('obergrenze')) {
+    return 'Sie haben bereits die maximale Zahl offener eigener Leads (50, auch Termine und Beratungen zählen). Schaffen Sie Platz: Leads abschließen oder freigeben (Lead öffnen und „Freigeben“ wählen).'
   }
   if (code === '42501' || msg.includes('geschaeftsfuehrer')) return 'Dafür fehlt die Berechtigung (nur der Geschäftsführer bzw. der Besitzer des Leads).'
   return 'Die Aktion konnte nicht ausgeführt werden. Bitte später erneut versuchen.'
@@ -399,7 +415,7 @@ export function verteilungsFehler(err: { code?: string | null; message?: string 
 export function anrufProtokollFehler(err: { code?: string | null; message?: string | null } | null | undefined): string {
   const code = err?.code ?? ''
   const msg = (err?.message ?? '').toLowerCase()
-  if (code === '53400' || msg.includes('anruf_limit')) {
+  if (code === 'PT429' || code === '53400' || msg.includes('anruf_limit')) {
     if (msg.includes('lead_limit')) return 'Dieser Lead wurde gerade erst angerufen. Bitte mindestens 10 Minuten bis zum nächsten Anruf warten.'
     if (msg.includes('nutzer_limit')) return 'Das Limit von 30 Anrufen pro Stunde ist erreicht. Bitte später weitertelefonieren.'
     return 'Bitte einen Moment warten, bevor der nächste Anruf gestartet wird.'

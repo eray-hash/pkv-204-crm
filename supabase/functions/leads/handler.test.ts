@@ -171,8 +171,9 @@ test('istEingabefehler: nur Klassen 22 und 23', () => {
   assert.equal(istEingabefehler('P0001'), false)
 })
 
-test('bereinigeRohbody entfernt authorization in jeder Schreibweise', () => {
-  assert.deepEqual(bereinigeRohbody({ a: 1, AUTHORIZATION: 'x', authorization: 'y' }), { a: 1 })
+test('bereinigeRohbody speichert nur die bekannten Felder (Allowlist), nichts anderes', () => {
+  assert.deepEqual(bereinigeRohbody({ lead_id: 'x', name: 'N', AUTHORIZATION: 'x', authorization: 'y', zusatz: { tief: 1 }, passwort: 'p' }), { lead_id: 'x', name: 'N' })
+  assert.deepEqual(bereinigeRohbody({ kanal: 'web', rufnummer_verifiziert: true, user_agent: 'UA', einwilligung_version: 'v1', begunstigter: 'B' }), { kanal: 'web', rufnummer_verifiziert: true, user_agent: 'UA', einwilligung_version: 'v1', begunstigter: 'B' })
   assert.deepEqual(bereinigeRohbody([1, 2]), [1, 2])
   assert.equal(bereinigeRohbody('text'), 'text')
 })

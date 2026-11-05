@@ -93,11 +93,23 @@ export function fehlerAusAntwort(status: number | null, json: unknown): { meldun
   if (typeof o.fehler === 'string' && o.fehler) return { meldung: o.fehler, code }
   if (status === 404) return { meldung: 'Der Telefonie-Dienst ist noch nicht eingerichtet.', code: 'dienst_fehlt' }
   if (status === 401) return { meldung: 'Bitte erneut anmelden.', code: 'nicht_angemeldet' }
-  if (status === null) return { meldung: 'Der Telefonie-Dienst ist nicht erreichbar. Bitte die Internetverbindung prüfen.', code: 'netzwerk' }
+  if (status === null) {
+    return {
+      meldung: 'Keine Verbindung zum Telefonie-Dienst. Der Anruf wurde möglicherweise gestartet. Bitte prüfen Sie Ihr Telefon, bevor Sie erneut wählen.',
+      code: 'netzwerk',
+    }
+  }
   return { meldung: 'Die Telefonie ist gerade nicht verfügbar. Bitte später erneut versuchen.', code: null }
 }
 
 /** Fehler, bei denen der Power Dialer auf den tel:-Link zurueckfallen soll (statt eine Fehlermeldung zu zeigen). */
 export function sollAufTelFallen(code: string | null): boolean {
-  return code === 'nicht_verbunden' || code === 'dienst_fehlt' || code === 'netzwerk'
+  // Nur wenn sicher kein Anruf ausgeloest wurde. Bei Netzwerkfehlern und unklarem Ausgang (anbieter_unklar) wird NICHT automatisch
+  // auf die Telefon-App umgeschaltet: der Anruf kann bereits gestartet sein; der Nutzer entscheidet selbst.
+  return code === 'nicht_verbunden' || code === 'dienst_fehlt'
+}
+
+/** Ausgang unklar: der Anruf wurde moeglicherweise gestartet. */
+export function anrufAusgangUnklar(code: string | null): boolean {
+  return code === 'netzwerk' || code === 'anbieter_unklar'
 }

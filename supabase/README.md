@@ -154,7 +154,7 @@ Migration `migrations/20261103000000_qa_haertung.sql` (wiederholbar; verlangt in
 
 **Bekannte Grenzen**
 
-- Mitarbeiter sehen Leads anderer nicht mehr (Dashboard-Zahlen und Listen zeigen fuer sie nur freie und eigene Leads). Ein Lead, der einem anderen zugewiesen wird, verschwindet per Realtime aus der Sicht.
+- Mitarbeiter sehen Leads anderer nicht mehr (Dashboard-Zahlen und Listen zeigen fuer sie nur freie, uebernehmbare und eigene Leads). Realtime meldet Zuweisungen an andere NICHT (die Zeile wird fuer den Mitarbeiter unsichtbar, ein Ereignis kommt nicht an). Das Frontend faengt das auf: es laedt alle 60 Sekunden, beim Zurueckkehren in den Tab und bei wiederkehrender Verbindung komplett nach und prueft im Power Dialer beim Wechsel zum Lead und vor dem Anruf den aktuellen Lead frisch.
 - Der Wert fuer das Maximalalter der Einwilligung (365 Tage), die Obergrenze (50) und die Anruflimits sind Vorschlaege; sie stehen an je einer Stelle (SQL-Funktionen bzw. `anruf_limit_grund`).
 - Das Rate-Limit der Funktion `mitarbeiter-passwort` liegt weiter im Instanzspeicher.
 - Die Funktion `nutzer_sitzungen_beenden` greift auf das Auth-Schema zu; ob die Rolle `postgres` dort in jedem Projekt loeschen darf, ist ungeprueft (im Fehlerfall bleibt das Passwort gesetzt, nur die alten Sitzungen laufen weiter).
@@ -164,3 +164,20 @@ Migration `migrations/20261103000000_qa_haertung.sql` (wiederholbar; verlangt in
 - Migration `migrations/20261103000100_status_zeitpunkt.sql` (nach `20261103000000_qa_haertung.sql`, wiederholbar): Spalte `leads.status_geaendert_am` (Trigger bei Statuswechsel, Backfill = `updated_at`, `updated_at` bleibt dabei unveraendert) und neu erstellte Ansicht `anrufbare_leads`. Dashboard ("Gewonnen", "Termine") und Team-Seite zaehlen danach nach diesem Zeitpunkt; ohne die Migration faellt das Frontend automatisch auf `updated_at` zurueck.
 - Das Frontend liest die Lead-Spalten stufenweise (mit/ohne `status_geaendert_am`, `gesperrt_am`/`sperrgrund`, `zugewiesen_von`/`uebernommen_am`) und funktioniert deshalb auch dann, wenn eine Migration noch fehlt.
 - Neu im Frontend (nutzt die RPCs `lead_sperren`/`lead_entsperren` und `lead_einwilligung` aus der QA-Haertung): Sperr-Dialog "Widerruf / nicht mehr anrufen" im Lead-Detail und im Power Dialer, Entsperren fuer den Geschaeftsfuehrer, tel:-Anrufe nur nach Uebernahme und erfolgreichem Protokoll.
+
+## QA-Nachpruefung (Runde 3, 03.11.2026)
+
+Migration `migrations/20261103000200_qa_nachpruefung.sql` (nach `...000000` und `...000100`, wiederholbar; im Test `supabase/tests/migrationen.test.mjs` zweimal ausgefuehrt):
+
+- `geschuetzte_status()` enthaelt jetzt auch `verloren` und `gewonnen`: Mitarbeiter duerfen darauf abschliessen, aber nicht mehr zurueckdrehen. `lead_sperren` nutzt dieselbe Liste.
+- Die Obergrenze offener eigener Leads (50) zaehlt alle offenen Status (auch `termin_vereinbart`, `beratung`).
+- `leads_select`: FREIE Leads sind fuer Mitarbeiter nur sichtbar, wenn sie uebernehmbar sind (neu/kontaktiert/nicht_erreicht), nicht gesperrt und kein Testlead; eigene Leads und die Sicht des Geschaeftsfuehrers unveraendert. `lead_einwilligung` folgt derselben Regel.
+- `lead_sperren`: FREIE, noch nicht gesperrte Leads kann jeder angemeldete Nutzer ohne vorherige Uebernahme sperren; zugewiesene (oder schon gesperrte) nur Besitzer oder Geschaeftsfuehrer. Beim Mitsperren weiterer Leads mit derselben Nummer gilt dieselbe Statuslogik (offen -> kein_interesse).
+- `anrufe_limit_guard` prueft zuerst `user_id = auth.uid()` (sonst 42501), damit keine Limits fremder Nutzer verraten werden. Limit-Fehler (Anrufe und Obergrenze) haben SQLSTATE `PT429` (PostgREST liefert daraus HTTP 429, die Meldung beginnt mit `anruf_limit:` bzw. `limit_offene_leads:`); das Frontend erkennt sie am Code und am Text.
+- `anrufbare_leads` ist fuer anon/authenticated nur noch lesbar.
+- Datenbereinigung: Rufnummern der Form `+490...` werden zu `+49...` (Leads: `updated_at` bleibt unveraendert; Sperrliste: bei Schluesselkonflikt bleibt der aeltere Eintrag).
+
+Funktionen (neu buendeln und ersetzen): `leads` (Originalbody `payload_roh` enthaelt nur noch die dokumentierten Felder), `anrufen` und `telefonie-verbinden` (siehe unten; beide teilen `_shared`). `mitarbeiter-passwort` ist unveraendert.
+
+- **Unklarer Ausgang bei sipgate:** Kommt auf die Anruf-Anfrage keine definitive Antwort (Zeitueberschreitung, Verbindungsabbruch), bleibt die reservierte Zeile stehen (`provider_call_id` leer), die Funktion antwortet 502 mit Code `anbieter_unklar` und neutraler Meldung, und das Frontend wechselt nicht automatisch auf die Telefon-App, sondern bietet die manuelle Wahl an. Definitive Fehlerantworten (4xx/5xx von sipgate) loeschen die Reservierung weiter.
+- **Eigene Rueckruf-/Anzeigenummer:** E.164 auch aus anderen Laendern erlaubt; deutsche Nummern durchlaufen die deutsche Allowlist; bekannte Premium-/Sonderpraefixe (nicht abschliessend: AT 0900/0901/0930/0931/0939, CH 0900/0901/0906, UK 09x/070, NANP 900, +979/+882/+883/+881/+870) sind gesperrt. Lead-Zielnummern bleiben deutsch-only.

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useAuth } from '../../context/AuthContext'
 import { useLeads } from '../../context/LeadsContext'
 import { SectionHeader, KpiTile, inputClass } from '../../components/ui'
 import LeadTable from '../../components/LeadTable'
@@ -7,6 +8,8 @@ import { ALL_STATUS, isOpenStatus, STATUS_LABEL, type DbLead, type DbLeadStatus 
 
 function Liste({ leads }: { leads: DbLead[] }) {
   const { queue } = useLeads()
+  const { profile } = useAuth()
+  const istGF = profile?.rolle === 'geschaeftsfuehrer'
   const [suche, setSuche] = useState('')
   const [status, setStatus] = useState<DbLeadStatus | 'alle'>('alle')
 
@@ -25,7 +28,7 @@ function Liste({ leads }: { leads: DbLead[] }) {
   return (
     <>
       <div className="mb-5 grid grid-cols-2 gap-4 md:grid-cols-4">
-        <KpiTile label="Leads gesamt" value={String(leads.length)} />
+        <KpiTile label={istGF ? 'Leads gesamt' : 'Freie und eigene Leads'} value={String(leads.length)} />
         <KpiTile label="In Bearbeitung" value={String(offen)} accent="amber" />
         <KpiTile label="Neu" value={String(neu)} />
         <KpiTile label="Anrufbar" value={String(queue.length)} accent="brand" hint="im Power Dialer" />
@@ -62,9 +65,11 @@ function Liste({ leads }: { leads: DbLead[] }) {
 }
 
 export default function LeadsUebersicht() {
+  const { profile } = useAuth()
+  const istGF = profile?.rolle === 'geschaeftsfuehrer'
   return (
     <div>
-      <SectionHeader title="Leads" subtitle="Alle eingegangenen Leads aus der Datenbank, neueste zuerst" />
+      <SectionHeader title="Leads" subtitle={istGF ? 'Alle eingegangenen Leads aus der Datenbank, neueste zuerst' : 'Freie und eigene Leads, neueste zuerst'} />
       <LeadsGate>{(leads) => <Liste leads={leads} />}</LeadsGate>
     </div>
   )

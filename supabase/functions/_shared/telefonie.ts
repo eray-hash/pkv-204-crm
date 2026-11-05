@@ -5,7 +5,7 @@
 // - Das sipgate-Token verlaesst diesen Code nie in Richtung Browser, Log oder Fehlermeldung.
 // - Fehlermeldungen sind feste deutsche Texte; Antworttexte von sipgate werden nicht weitergereicht.
 
-import { istErlaubteRufnummer, normalisiereDeutscheRufnummer } from './rufnummer.ts'
+import { istErlaubteRufnummer, normalisiereAnzeigeRufnummer, normalisiereDeutscheRufnummer } from './rufnummer.ts'
 
 export const SIPGATE_BASE = 'https://api.sipgate.com/v2'
 export const ANBIETER_CLASSIC = 'sipgate_classic'
@@ -25,6 +25,7 @@ export type FehlerCode =
   | 'geraet_unbekannt'
   | 'zu_viele_anfragen'
   | 'anbieter_nicht_erreichbar'
+  | 'anbieter_unklar'
   | 'anbieter_fehler'
   | 'nicht_unterstuetzt'
   | 'nicht_verbunden'
@@ -133,6 +134,11 @@ export function normalisiereRufnummer(raw: string): string | null {
   return normalisiereDeutscheRufnummer(raw)
 }
 
+/** Eigene Rueckruf-/Anzeigenummer des Nutzers: E.164, auch Ausland, aber keine Premium-/Sondernummern. */
+export function normalisiereEigeneRufnummer(raw: string): string | null {
+  return normalisiereAnzeigeRufnummer(raw)
+}
+
 export type Parse<T> = { ok: true; value: T } | { ok: false; meldung: string }
 
 export type VerbindenAnfrage =
@@ -153,8 +159,8 @@ function optionaleRufnummer(v: unknown, label: string): Parse<string | null> {
   const s = textfeld(v)
   if (s === null) return { ok: false, meldung: `${label}: ungültiger Wert.` }
   if (s === '') return { ok: true, value: null }
-  const n = normalisiereRufnummer(s)
-  if (!n) return { ok: false, meldung: `${label}: bitte eine gültige Rufnummer eingeben (z. B. +49 151 12345678).` }
+  const n = normalisiereEigeneRufnummer(s)
+  if (!n) return { ok: false, meldung: `${label}: bitte eine gültige Rufnummer im Format +49 151 12345678 eingeben (keine Premium- oder Sondernummern).` }
   return { ok: true, value: n }
 }
 
@@ -390,6 +396,18 @@ function nichtErreichbar(): TelefonieFehler {
   return new TelefonieFehler('anbieter_nicht_erreichbar', 'sipgate ist gerade nicht erreichbar. Bitte später erneut versuchen.', 502)
 }
 
+/**
+ * Keine definitive Antwort von sipgate (Zeitueberschreitung, Verbindungsabbruch) NACH dem Senden der Anruf-Anfrage: Der Anruf
+ * kann trotzdem gestartet worden sein. Deshalb darf die Anruf-Reservierung nicht geloescht und nicht automatisch erneut gewaehlt werden.
+ */
+export function anrufAusgangUnklar(): TelefonieFehler {
+  return new TelefonieFehler(
+    'anbieter_unklar',
+    'Die Antwort von sipgate ist ausgeblieben. Der Anruf wurde möglicherweise gestartet. Bitte prüfen Sie Ihr Telefon, bevor Sie erneut wählen.',
+    502,
+  )
+}
+
 function nichtUnterstuetzt(): TelefonieFehler {
   return new TelefonieFehler('nicht_unterstuetzt', 'Dieser Telefonie-Anbieter wird nicht unterstützt.', 422)
 }
@@ -419,7 +437,8 @@ async function sipgateAnfrage(
       signal: AbortSignal.timeout(SIPGATE_TIMEOUT_MS),
     })
   } catch {
-    throw nichtErreichbar()
+    // Bei der Anruf-Anfrage ist der Ausgang offen (Anfrage evtl. angekommen); bei allen anderen Anfragen ist nichts passiert
+    throw kontext === 'anruf' ? anrufAusgangUnklar() : nichtErreichbar()
   }
   if (!res.ok) throw fehlerAusSipgateStatus(res.status, kontext, anbieter)
   try {

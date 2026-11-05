@@ -65,3 +65,17 @@ test('Altdaten: nur +49 im Format E.164 und Allowlist', () => {
   assert.equal(istErlaubteRufnummer('+49015112345678'), false)
   assert.equal(istErlaubteRufnummer('+4915112345678 '), false)
 })
+
+import { normalisiereAnzeigeRufnummer as anzeige } from './rufnummer.ts'
+
+test('Anzeigenummer: Ausland im E.164-Format erlaubt, deutsche Nummern wie bisher, Premium und Unsinn abgelehnt', () => {
+  assert.equal(anzeige('+43 664 1234567'), '+436641234567')
+  assert.equal(anzeige('0043 664 1234567'), '+436641234567')
+  assert.equal(anzeige('+41 79 123 45 67'), '+41791234567')
+  assert.equal(anzeige('+66 81 234 5678'), '+66812345678') // Thailand
+  assert.equal(anzeige('0151 12345678'), '+4915112345678')
+  assert.equal(anzeige('+49 (0) 151 1234 5678'), '+4915112345678')
+  for (const x of ['0900 1234567', '+49 900 1234567', '+4390012345678', '+41 900 123 456', '+44 909 879 0000', '+1 900 555 0100', '+979 1234 5678', '+882 12345678', '+436', 'abc', '', '+43 664 12x4567', '+43 664 1234567 +1', '4366412345678', '+4366412345678901234']) {
+    assert.equal(anzeige(x), null, x)
+  }
+})

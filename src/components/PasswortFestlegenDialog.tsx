@@ -43,7 +43,7 @@ function Inhalt({ ziel, onClose }: { ziel: { id: string; name: string }; onClose
   }
 
   return (
-    <Modal open onClose={busy ? () => undefined : onClose} title={`Passwort festlegen: ${ziel.name || 'Teammitglied'}`}>
+    <Modal open onClose={busy ? () => undefined : onClose} busy={busy} title={`Passwort festlegen: ${ziel.name || 'Teammitglied'}`}>
       <form onSubmit={speichern} className="space-y-3" noValidate>
         <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
           Geben Sie das Passwort telefonisch weiter, nicht per Chat oder Mail. Die Person muss es beim ersten Login ändern.

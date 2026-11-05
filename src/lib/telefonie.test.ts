@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { ERFORDERLICHE_RECHTE, fehlerAusAntwort, geraetTypLabel, parseGeraete, parseStatus, sollAufTelFallen } from './telefonie.ts'
+import { ERFORDERLICHE_RECHTE, fehlerAusAntwort, geraetTypLabel, parseGeraete, parseStatus, sollAufTelFallen, anrufAusgangUnklar } from './telefonie.ts'
 
 test('parseStatus: verbunden, nicht verbunden und ungueltige Antworten', () => {
   assert.deepEqual(parseStatus({ ok: true, verbunden: false, tokenGespeichert: false }), {
@@ -53,7 +53,13 @@ test('fehlerAusAntwort: feste Meldung der Funktion, sonst verstaendliche Ersatzt
 test('Dialer-Fallback auf tel: bei fehlender Verbindung oder nicht erreichbarem Dienst, nicht bei echten Fehlern', () => {
   assert.equal(sollAufTelFallen('nicht_verbunden'), true)
   assert.equal(sollAufTelFallen('dienst_fehlt'), true)
-  assert.equal(sollAufTelFallen('netzwerk'), true)
+  // M7: bei Netzwerkfehler/unklarem Ausgang kein automatischer Wechsel auf tel: (der Anruf kann schon laufen)
+  assert.equal(sollAufTelFallen('netzwerk'), false)
+  assert.equal(sollAufTelFallen('anbieter_unklar'), false)
+  assert.equal(anrufAusgangUnklar('netzwerk'), true)
+  assert.equal(anrufAusgangUnklar('anbieter_unklar'), true)
+  assert.equal(anrufAusgangUnklar('token_ungueltig'), false)
+  assert.match(fehlerAusAntwort(null, undefined).meldung, /möglicherweise gestartet/)
   assert.equal(sollAufTelFallen('lead_gesperrt'), false)
   assert.equal(sollAufTelFallen('token_ungueltig'), false)
   assert.equal(sollAufTelFallen(null), false)

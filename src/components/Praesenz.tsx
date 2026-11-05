@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Users } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useTeam } from '../context/TeamContext'
+import { useJetzt } from '../lib/jetzt'
 import { useToast } from './ToastContext'
 import { effektivOnline, schalterZustand } from '../lib/praesenz'
 import { formatOrtszeit } from '../lib/zeit'
@@ -9,7 +10,7 @@ import { formatOrtszeit } from '../lib/zeit'
 /** Schalter "Ich nehme Live-Leads an" (setzt profiles.online). */
 export function LiveSwitch({ langesLabel = false }: { langesLabel?: boolean }) {
   const { profile, updateProfil } = useAuth()
-  const { jetzt } = useTeam()
+  const jetzt = useJetzt()
   const { showToast } = useToast()
   const [busy, setBusy] = useState(false)
   if (!profile) return null
@@ -52,7 +53,8 @@ export function LiveSwitch({ langesLabel = false }: { langesLabel?: boolean }) {
 
 /** Liste des Teams: Name, online/offline, Ortszeit der Person. */
 export function PraesenzListe() {
-  const { mitglieder, jetzt, loading, error } = useTeam()
+  const { mitglieder, loading, error } = useTeam()
+  const jetzt = useJetzt()
   if (loading && mitglieder.length === 0) return <p className="px-3 py-2 text-sm text-ink-400">Team wird geladen …</p>
   if (error && mitglieder.length === 0) return <p className="px-3 py-2 text-sm text-red-600">{error}</p>
   return (
@@ -81,7 +83,8 @@ export function PraesenzListe() {
 
 /** Kopfzeilen-Popover mit der Team-Praesenz. */
 export function PraesenzMenu() {
-  const { mitglieder, jetzt } = useTeam()
+  const { mitglieder } = useTeam()
+  const jetzt = useJetzt()
   const [offen, setOffen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 

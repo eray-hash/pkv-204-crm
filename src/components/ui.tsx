@@ -129,25 +129,38 @@ export function Modal({
   title,
   children,
   wide = false,
+  busy = false,
 }: {
   open: boolean
   onClose: () => void
   title: string
   children: ReactNode
   wide?: boolean
+  /** Waehrend einer laufenden Aktion: Fokus bleibt im Dialog (auch wenn Knoepfe deaktiviert werden) */
+  busy?: boolean
 }) {
   const titelId = useId()
   const dialogRef = useRef<HTMLDivElement>(null)
+  const hintergrundGedrueckt = useRef(false)
 
   // Beim Oeffnen den Fokus in den Dialog holen, beim Schliessen dorthin zurueckgeben, wo er vorher war
   useEffect(() => {
     if (!open) return
     const vorher = document.activeElement as HTMLElement | null
     const dialog = dialogRef.current
-    dialog?.querySelector<HTMLElement>(FOKUSSIERBAR)?.focus({ preventScroll: true })
+    // Erster sinnvoller Fokus: das erste Bedienelement im Inhalt, nicht der "Schliessen"-Knopf
+    const erstes = Array.from(dialog?.querySelectorAll<HTMLElement>(FOKUSSIERBAR) ?? []).find((el) => !el.hasAttribute('data-schliessen'))
+    erstes?.focus({ preventScroll: true })
     if (dialog && !dialog.contains(document.activeElement)) dialog.focus()
     return () => vorher?.focus?.({ preventScroll: true })
   }, [open])
+
+  // Werden waehrend einer Aktion die Knoepfe deaktiviert, verliert das Element den Fokus: dann auf den Dialog selbst zurueck
+  useEffect(() => {
+    if (!open || !busy) return
+    const dialog = dialogRef.current
+    if (dialog && !dialog.contains(document.activeElement)) dialog.focus({ preventScroll: true })
+  }, [open, busy])
 
   if (!open) return null
 
@@ -167,7 +180,17 @@ export function Modal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/40 p-4" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/40 p-4"
+      onMouseDown={(e) => {
+        hintergrundGedrueckt.current = e.target === e.currentTarget
+      }}
+      onClick={(e) => {
+        // Nur schliessen, wenn Druecken UND Loslassen auf dem Hintergrund stattfanden (kein Schliessen beim Markieren von Text im Dialog)
+        if (e.target === e.currentTarget && hintergrundGedrueckt.current) onClose()
+        hintergrundGedrueckt.current = false
+      }}
+    >
       <div
         ref={dialogRef}
         role="dialog"
@@ -176,13 +199,12 @@ export function Modal({
         tabIndex={-1}
         onKeyDown={onKeyDown}
         className={`max-h-[90vh] w-full overflow-y-auto rounded-2xl bg-white p-6 shadow-xl focus:outline-none ${wide ? 'max-w-2xl' : 'max-w-md'}`}
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
           <h2 id={titelId} className="text-lg font-semibold text-ink-900">
             {title}
           </h2>
-          <button type="button" onClick={onClose} aria-label="Schließen" className="rounded-lg p-1 text-ink-400 hover:bg-ink-100 hover:text-ink-700">
+          <button type="button" data-schliessen onClick={onClose} aria-label="Schließen" className="rounded-lg p-1 text-ink-400 hover:bg-ink-100 hover:text-ink-700">
             <X size={18} aria-hidden="true" />
           </button>
         </div>

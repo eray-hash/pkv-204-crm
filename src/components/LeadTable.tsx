@@ -4,6 +4,7 @@ import { formatDate, formatEuroExact } from '../lib/utils'
 import { filterZuweisung, statusLabel, statusTone, type DbLead, type ZuweisungsFilter } from '../lib/leads'
 import { useAuth } from '../context/AuthContext'
 import { useTeam } from '../context/TeamContext'
+import { useLeads } from '../context/LeadsContext'
 import { Badge, ScrollHint } from './ui'
 
 export function DbStatusBadge({ status }: { status: string }) {
@@ -24,6 +25,9 @@ export default function LeadTable({
   const navigate = useNavigate()
   const { session } = useAuth()
   const { nameVon } = useTeam()
+  // Das Duplikat-Kennzeichen nur zeigen, wenn der urspruengliche Lead fuer den Nutzer sichtbar ist (sonst fuehrt der Hinweis ins Leere)
+  const { leads: sichtbareLeads } = useLeads()
+  const sichtbareIds = new Set(sichtbareLeads.map((l) => l.id))
   const meId = session?.user.id ?? null
   const [filter, setFilter] = useState<ZuweisungsFilter>('alle')
 
@@ -49,6 +53,9 @@ export default function LeadTable({
           </button>
         ))}
       </div>
+      {filter === 'meine' && (
+        <p className="mb-2 text-xs text-ink-500">Eigene Leads freigeben: Lead öffnen und „Freigeben“ wählen. Es sind höchstens 50 offene eigene Leads möglich.</p>
+      )}
       <ScrollHint />
       <div className="overflow-x-auto rounded-2xl border border-ink-100 bg-white shadow-sm">
         <table className="w-full min-w-[820px] text-left text-sm">
@@ -88,7 +95,7 @@ export default function LeadTable({
                       Gesperrt
                     </Badge>
                   )}
-                  {lead.moegliches_duplikat_von && (
+                  {lead.moegliches_duplikat_von && sichtbareIds.has(lead.moegliches_duplikat_von) && (
                     <Badge tone="amber" className="ml-2">
                       Mögliches Duplikat
                     </Badge>

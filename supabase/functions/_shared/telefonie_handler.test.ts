@@ -477,6 +477,19 @@ test('anrufen: sipgate-Fehler werden auf deutsche Meldungen ohne Details abgebil
   }
 })
 
+test('anrufen: keine Antwort von sipgate (Abbruch/Zeitueberschreitung) -> unklarer Ausgang: Reservierung bleibt, neutrale Meldung', async () => {
+  const w = await weltMitZugang()
+  w.sip.verhalten.netz = true
+  const res = await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)
+  assert.equal(res.status, 502)
+  assert.equal(res.body.code, 'anbieter_unklar')
+  assert.match(String(res.body.fehler), /möglicherweise gestartet/)
+  assert.ok(!alsText(res.body).includes(TOKEN))
+  assert.equal(w.anrufe.length, 1, 'Zeile bleibt als Beleg stehen')
+  assert.equal(w.anrufe[0].provider_call_id, null)
+  assert.deepEqual(w.ereignisse, ['reservierung', 'uebernahme', 'sipgate-anruf'], 'nicht verworfen')
+})
+
 test('anrufen: Fehler beim Bestaetigen kippt den ausgeloesten Anruf nicht', async () => {
   const w = await weltMitZugang()
   w.deps.bestaetigeAnruf = async () => {

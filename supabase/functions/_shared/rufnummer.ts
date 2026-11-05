@@ -16,8 +16,17 @@ const GESPERRTE_PRAEFIXE = ['32', '700', '800', '900']
 export type Rufnummerntyp = 'mobil' | 'ortsnetz'
 
 /** Teil nach "+49" (ohne Trunk-Null) oder null, wenn die Nummer nicht erlaubt ist. */
+/** Enthaelt der Text Steuerzeichen (U+0000 bis U+001F, U+007F)? Ohne Regex mit Steuerzeichen (Lint). */
+function hatSteuerzeichen(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i)
+    if (c <= 0x1f || c === 0x7f) return true
+  }
+  return false
+}
+
 function nationalerTeil(raw: string): string | null {
-  if (/[\u0000-\u001f\u007f]/.test(raw)) return null
+  if (hatSteuerzeichen(raw)) return null
   // Zeichen, die in Rufnummern vorkommen duerfen; alles andere (Buchstaben, Steuerzeichen, ...) fuehrt zur Ablehnung
   if (/[^\d\s+\-/().]/.test(raw)) return null
   let s = raw.trim().replace(/\(0\)/g, '').replace(/[\s\-/().]/g, '')
@@ -64,4 +73,26 @@ export function normalisiereDeutscheRufnummer(raw: string): string | null {
 export function istErlaubteRufnummer(nummer: string): boolean {
   if (typeof nummer !== 'string' || !/^\+49[1-9]\d+$/.test(nummer)) return false
   return klassifiziere(nummer.slice(3)) !== null
+}
+
+// ---------- Rueckruf- und Anzeigenummern (eigene Nummer des Nutzers, auch Ausland erlaubt) ----------
+
+/** Bekannte internationale Mehrwert-/Sonderpraefixe (nicht abschliessend): AT 0900/0901/0930/0931/0939, CH 0900/0901/0906, UK 09x und 070 (Personal), NANP 900, internationale Netze. */
+const FREMD_PREMIUM_PRAEFIXE = ['+43900', '+43901', '+43930', '+43931', '+43939', '+41900', '+41901', '+41906', '+449', '+4470', '+1900', '+979', '+882', '+883', '+881', '+870']
+
+/**
+ * Normalisiert die eigene Rueckruf-/Anzeigenummer des Nutzers. Deutsche Nummern durchlaufen die deutsche Allowlist (ohne Premium/Sonder);
+ * Nummern anderer Laender muessen im E.164-Format stehen (+<Land><Nummer>, 8 bis 15 Ziffern) und duerfen kein bekanntes Premium-Praefix tragen.
+ * Lead-Zielnummern bleiben dagegen deutsch-only (normalisiereDeutscheRufnummer).
+ */
+export function normalisiereAnzeigeRufnummer(raw: string): string | null {
+  if (hatSteuerzeichen(raw) || /[^\d\s+\-/().]/.test(raw)) return null
+  let s = raw.trim().replace(/\(0\)/g, '').replace(/[\s\-/().]/g, '')
+  if (s.startsWith('00')) s = '+' + s.slice(2)
+  else if (s.startsWith('0')) return normalisiereDeutscheRufnummer(raw) // nationale Schreibweise = Deutschland
+  if (!s.startsWith('+')) return null
+  if (s.startsWith('+49')) return normalisiereDeutscheRufnummer(s)
+  if (s.indexOf('+', 1) !== -1 || !/^\+[1-9]\d{7,14}$/.test(s)) return null
+  if (FREMD_PREMIUM_PRAEFIXE.some((p) => s.startsWith(p))) return null
+  return s
 }

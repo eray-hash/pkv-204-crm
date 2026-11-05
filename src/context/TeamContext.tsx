@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { fetchTeam } from '../lib/profilesApi'
 import type { Profile } from '../lib/profil'
 import { useAuth } from './AuthContext'
+import JetztProvider from './JetztProvider'
 
 interface TeamContextValue {
   /** Alle Teammitglieder (aus profiles, fuer alle eingeloggten Nutzer lesbar) */
@@ -11,8 +12,6 @@ interface TeamContextValue {
   /** Name zu einer Nutzer-ID ("Frei" ohne ID, "Unbekannt" wenn nicht gefunden) */
   nameVon: (id: string | null) => string
   reload: () => Promise<void>
-  /** Aktuelle Zeit, wird jede halbe Minute aktualisiert (fuer Erreichbarkeit und Ortszeit) */
-  jetzt: Date
 }
 
 const TeamContext = createContext<TeamContextValue | null>(null)
@@ -24,7 +23,6 @@ export function TeamProvider({ children }: { children: ReactNode }) {
   const [mitglieder, setMitglieder] = useState<Profile[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [jetzt, setJetzt] = useState(() => new Date())
 
   const reload = useCallback(async () => {
     const res = await fetchTeam()
@@ -49,11 +47,6 @@ export function TeamProvider({ children }: { children: ReactNode }) {
     }
   }, [reload])
 
-  useEffect(() => {
-    const t = setInterval(() => setJetzt(new Date()), 30_000)
-    return () => clearInterval(t)
-  }, [])
-
   // Eigene Aenderungen (z. B. Online-Schalter) sofort in der Liste zeigen
   const eigenes = profile
   const angereichert = useMemo(() => {
@@ -70,10 +63,14 @@ export function TeamProvider({ children }: { children: ReactNode }) {
   )
 
   const value = useMemo<TeamContextValue>(
-    () => ({ mitglieder: angereichert, loading, error, nameVon, reload, jetzt }),
-    [angereichert, loading, error, nameVon, reload, jetzt],
+    () => ({ mitglieder: angereichert, loading, error, nameVon, reload }),
+    [angereichert, loading, error, nameVon, reload],
   )
-  return <TeamContext.Provider value={value}>{children}</TeamContext.Provider>
+  return (
+    <TeamContext.Provider value={value}>
+      <JetztProvider>{children}</JetztProvider>
+    </TeamContext.Provider>
+  )
 }
 
 export function useTeam(): TeamContextValue {

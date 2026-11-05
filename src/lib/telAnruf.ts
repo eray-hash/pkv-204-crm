@@ -24,8 +24,12 @@ export async function bereiteTelAnrufVor(lead: Pick<DbLead, 'id' | 'zugewiesen_a
     else {
       // ok=false: vergeben oder (selten) schon mein Lead
       const neu = await deps.refreshLead(lead.id)
-      if (!neu || neu.zugewiesen_an !== deps.meId) {
-        return { ok: false, meldung: 'Dieser Lead wurde inzwischen von jemand anderem übernommen oder kann nicht übernommen werden.' }
+      if (!neu || (neu.zugewiesen_an !== null && neu.zugewiesen_an !== deps.meId)) {
+        return { ok: false, meldung: 'Dieser Lead wurde inzwischen von jemand anderem übernommen.' }
+      }
+      // noch frei, aber nicht uebernehmbar (gesperrt oder Status geaendert)
+      if (neu.zugewiesen_an === null) {
+        return { ok: false, meldung: 'Dieser Lead kann nicht übernommen werden (gesperrt oder in einem Status, den nur der Geschäftsführer zuweisen kann).' }
       }
     }
   }

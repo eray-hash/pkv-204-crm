@@ -30,10 +30,32 @@ export function istEingabefehler(code: string | null | undefined): boolean {
   return typeof code === 'string' && /^(22|23)/.test(code)
 }
 
-/** Entfernt Schluessel "authorization" (beliebige Schreibweise) aus dem Originalbody, bevor er als Nachweis gespeichert wird. */
+/** Die dokumentierten Felder des Webhooks. Nur diese landen im Originalbody (payload_roh); Zusatzfelder werden nicht gespeichert. */
+export const BEKANNTE_FELDER = [
+  'lead_id',
+  'name',
+  'telefon',
+  'email',
+  'gesellschaft',
+  'tarifbeitrag',
+  'quelle',
+  'eingang_zeit',
+  'einwilligung_zeit',
+  'einwilligung_text',
+  'einwilligung_quelle',
+  'einwilligung_ip',
+  'einwilligung_version',
+  'kanal',
+  'begunstigter',
+  'user_agent',
+  'rufnummer_verifiziert',
+] as const
+
+/** Reduziert den Originalbody auf die bekannten Felder (Allowlist); "authorization" und beliebige Zusatzfelder fallen automatisch weg. */
 export function bereinigeRohbody(body: unknown): unknown {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return body
-  return Object.fromEntries(Object.entries(body as Record<string, unknown>).filter(([k]) => k.toLowerCase() !== 'authorization'))
+  const o = body as Record<string, unknown>
+  return Object.fromEntries(BEKANNTE_FELDER.filter((k) => k in o).map((k) => [k, o[k]]))
 }
 
 export async function behandleLeadAnfrage(req: Request, deps: LeadDeps): Promise<WebhookAntwort> {

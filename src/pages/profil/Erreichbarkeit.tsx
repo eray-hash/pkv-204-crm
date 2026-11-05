@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { AlertCircle, CheckCircle2, Clock, Loader2 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
-import { useTeam } from '../../context/TeamContext'
+import { useJetzt } from '../../lib/jetzt'
 import { useToast } from '../../components/ToastContext'
 import { Badge, Button, Card, Field, inputClass } from '../../components/ui'
 import { effektivOnline, istImAutoFenster } from '../../lib/praesenz'
@@ -10,7 +10,7 @@ import { formatOrtszeit, zeitzonenListe } from '../../lib/zeit'
 
 export default function Erreichbarkeit() {
   const { profile, updateProfil } = useAuth()
-  const { jetzt } = useTeam()
+  const jetzt = useJetzt()
   const { showToast } = useToast()
   const zonen = useMemo(() => zeitzonenListe(), [])
 

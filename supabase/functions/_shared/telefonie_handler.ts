@@ -284,8 +284,10 @@ export async function behandleAnrufen(userId: string, rawBody: unknown, deps: An
       }
       return { status: 200, body: { ok: true, protokolliert } }
     } catch (e) {
-      // Der Anruf kam nicht zustande: die reservierte Zeile wird GELOESCHT (siehe README: das Protokoll zeigt nur wirklich
-      // ausgeloeste Anrufe, und gescheiterte Versuche verbrauchen kein Limit).
+      // Unklarer Ausgang (sipgate hat nicht definitiv geantwortet): Die Zeile BLEIBT (provider_call_id leer), der Anruf kann laufen.
+      if (e instanceof TelefonieFehler && e.code === 'anbieter_unklar') throw e
+      // Sonst kam der Anruf sicher nicht zustande: die reservierte Zeile wird GELOESCHT (siehe README: das Protokoll zeigt nur
+      // wirklich ausgeloeste Anrufe, und gescheiterte Versuche verbrauchen kein Limit).
       try {
         await deps.verwerfeAnruf(reservierungId)
       } catch {

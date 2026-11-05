@@ -26,11 +26,18 @@ export type LeadInput = {
 export type Ergebnis = { ok: true; value: LeadInput } | { ok: false; fehler: Fehler[] }
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
-const STEUERZEICHEN = /[\u0000-\u001f\u007f]/
 /** Im Wortlaut der Einwilligung sind Zeilenumbrueche und Tabs erlaubt (echte Texte haben oft Absaetze), alle anderen Steuerzeichen nicht. */
-const STEUERZEICHEN_OHNE_UMBRUCH = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/
 const UMBRUCH_ERLAUBT = new Set(['einwilligung_text'])
-const hatUnzulaessigeZeichen = (key: string, v: string) => (UMBRUCH_ERLAUBT.has(key) ? STEUERZEICHEN_OHNE_UMBRUCH : STEUERZEICHEN).test(v)
+const UMBRUCH_ZEICHEN = new Set([0x09, 0x0a, 0x0d])
+/** Steuerzeichen (U+0000 bis U+001F, U+007F) per Zeichencode geprueft (ohne Regex mit Steuerzeichen). */
+function hatSteuerzeichen(v: string, umbruchErlaubt: boolean): boolean {
+  for (let i = 0; i < v.length; i++) {
+    const c = v.charCodeAt(i)
+    if ((c <= 0x1f || c === 0x7f) && !(umbruchErlaubt && UMBRUCH_ZEICHEN.has(c))) return true
+  }
+  return false
+}
+const hatUnzulaessigeZeichen = (key: string, v: string) => hatSteuerzeichen(v, UMBRUCH_ERLAUBT.has(key))
 const ISO = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(Z|[+-]\d{2}:\d{2})$/
 
 const TOLERANZ_MS = 5 * 60 * 1000

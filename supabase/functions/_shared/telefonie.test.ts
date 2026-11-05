@@ -410,3 +410,11 @@ test('Fehlerabbildung: Netzwerkfehler und Zeitueberschreitung verraten nichts', 
   assert.ok(!fehler.message.includes(GEHEIMES_TOKEN))
   assert.ok(!fehler.message.includes(Buffer.from(`${Z.tokenId}:${Z.token}`).toString('base64')))
 })
+
+test('Rueckruf-/Anzeigenummer: Ausland (E.164) erlaubt, Premium und Sondernummern abgelehnt, Lead-Ziele bleiben deutsch', () => {
+  const r = parseVerbindenBody({ aktion: 'geraet_waehlen', geraetId: 'm0', rufnummerCaller: '+43 664 1234567', rufnummerAnzeige: '+66 81 234 5678' })
+  assert.deepEqual(r, { ok: true, value: { aktion: 'geraet_waehlen', geraetId: 'm0', rufnummerCaller: '+436641234567', rufnummerAnzeige: '+66812345678' } })
+  assert.equal(parseVerbindenBody({ aktion: 'geraet_waehlen', geraetId: 'm0', rufnummerCaller: '0900 1234567' }).ok, false)
+  assert.equal(parseVerbindenBody({ aktion: 'geraet_waehlen', geraetId: 'm0', rufnummerAnzeige: '+41 900 123 456' }).ok, false)
+  assert.equal(normalisiereRufnummer('+43 664 1234567'), null)
+})
