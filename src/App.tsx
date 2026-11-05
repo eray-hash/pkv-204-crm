@@ -11,6 +11,7 @@ import Kunden from './pages/leads/Kunden'
 import Verloren from './pages/leads/Verloren'
 import Alte from './pages/leads/Alte'
 import Reklamiert from './pages/leads/Reklamiert'
+import Testleads from './pages/leads/Testleads'
 import LeadDetail from './pages/leads/LeadDetail'
 import PowerDialer from './pages/leads/PowerDialer'
 import Wiedervorlagen from './pages/Wiedervorlagen'
@@ -37,6 +38,7 @@ export default function App() {
                     <Route path="/leads/verloren" element={<Verloren />} />
                     <Route path="/leads/alt" element={<Alte />} />
                     <Route path="/leads/reklamiert" element={<Reklamiert />} />
+                    <Route path="/leads/testleads" element={<Testleads />} />
                     <Route path="/leads/power-dialer" element={<PowerDialer />} />
                     <Route path="/leads/:id" element={<LeadDetail />} />
                     <Route path="/wiedervorlagen" element={<Wiedervorlagen />} />

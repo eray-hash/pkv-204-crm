@@ -127,7 +127,7 @@ export default function Layout() {
             </button>
             {leadsOpen && (
               <div className="ml-4 mt-0.5 space-y-0.5 border-l border-ink-100 pl-3">
-                {leadSubLinks.map((l) => (
+                {[...leadSubLinks, ...(profile?.rolle === 'geschaeftsfuehrer' ? [{ to: '/leads/testleads', label: 'Testleads' }] : [])].map((l) => (
                   <NavLink
                     key={l.to}
                     to={l.to}
