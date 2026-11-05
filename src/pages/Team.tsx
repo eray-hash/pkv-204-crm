@@ -6,6 +6,10 @@ import { Button, Card, SectionHeader, KpiTile, ScrollHint, LoadingBlock, ErrorBl
 import PasswortFestlegenDialog from '../components/PasswortFestlegenDialog'
 import { ladeAnrufzahlen } from '../lib/teamApi'
 import { summeTeam, teamZeilen } from '../lib/team'
+import { zeitraumBereich, type ZeitraumArt } from '../lib/zeitraum'
+import { eingabeZeitzone } from '../lib/zeit'
+import { ZEITRAUM_LABELS } from '../lib/utils'
+import { inputClass } from '../components/ui'
 import { KeyRound, ShieldAlert } from 'lucide-react'
 
 const NICHT_ERFASST = 'noch nicht erfasst'
@@ -34,6 +38,7 @@ export default function Team() {
   const { leads } = useLeads()
   const [anrufe, setAnrufe] = useState<Record<string, number> | null>(null)
   const [anrufeGeladen, setAnrufeGeladen] = useState(false)
+  const [zeitraum, setZeitraum] = useState<ZeitraumArt>('alle')
   const [passwortFuer, setPasswortFuer] = useState<{ id: string; name: string } | null>(null)
 
   const istGf = profile?.rolle === 'geschaeftsfuehrer'
@@ -52,7 +57,9 @@ export default function Team() {
     }
   }, [istGf, idKey])
 
-  const zeilen = useMemo(() => teamZeilen(mitglieder.map((m) => m.id), leads, anrufe), [mitglieder, leads, anrufe])
+  const zeitzone = eingabeZeitzone()
+  const bereich = useMemo(() => zeitraumBereich(zeitraum, { tz: zeitzone }).bereich, [zeitraum, zeitzone])
+  const zeilen = useMemo(() => teamZeilen(mitglieder.map((m) => m.id), leads, anrufe, bereich), [mitglieder, leads, anrufe, bereich])
   const summe = useMemo(() => summeTeam(zeilen), [zeilen])
 
   if (!istGf) {
@@ -61,7 +68,7 @@ export default function Team() {
         <SectionHeader title="Team" subtitle="Team-Tracking" />
         <Card className="flex flex-col items-center gap-2 p-10 text-center text-sm text-ink-500">
           <ShieldAlert size={28} className="text-amber-500" />
-          <p>Dieser Bereich ist nur in der Ansicht „Geschäftsführer“ sichtbar.</p>
+          <p>Dieser Bereich ist nur für die Geschäftsführung sichtbar.</p>
           <p className="text-xs text-ink-400">Ihr Konto hat die Rolle „Mitarbeiter“.</p>
         </Card>
       </div>
@@ -87,6 +94,17 @@ export default function Team() {
               <ErrorBlock message="Die Anrufzahlen konnten nicht geladen werden." />
             </div>
           )}
+
+          <div className="mb-4 flex flex-wrap items-center gap-2 text-sm text-ink-500">
+            <label htmlFor="team-zeitraum">Termin und Gewonnen zählen nach dem Zeitpunkt der Statusänderung:</label>
+            <select id="team-zeitraum" className={`${inputClass} w-auto py-1.5`} value={zeitraum} onChange={(e) => setZeitraum(e.target.value as ZeitraumArt)}>
+              {(['alle', 'letzte30', 'diesermonat', 'letztermonat'] as const).map((z) => (
+                <option key={z} value={z}>
+                  {ZEITRAUM_LABELS[z]}
+                </option>
+              ))}
+            </select>
+          </div>
 
           <div className="mb-5 grid grid-cols-2 gap-4 md:grid-cols-4">
             <KpiTile label="Anrufe gesamt" value={summe.anrufe === null ? '–' : String(summe.anrufe)} />

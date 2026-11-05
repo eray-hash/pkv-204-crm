@@ -12,6 +12,12 @@ import {
   kategorie,
   leadZugriff,
   anrufProtokollFehler,
+  fuehreZusammen,
+  upsertLead,
+  anrufPruefung,
+  dialerReihenfolge,
+  nochImDialerAnrufbar,
+  statusZeit,
   filterZuweisung,
   queueFuerNutzer,
   verteilungsFehler,
@@ -46,6 +52,9 @@ function lead(partial: Partial<DbLead> = {}): DbLead {
     zugewiesen_von: null,
     uebernommen_am: null,
     naechster_anruf_ab: null,
+    gesperrt_am: null,
+    sperrgrund: null,
+    status_geaendert_am: null,
     created_at: '2026-10-22T10:00:00.000Z',
     updated_at: '2026-10-22T10:00:00.000Z',
     ...partial,
@@ -305,4 +314,87 @@ test('mapLeadRow liest Sperrangaben (gesperrt_am, sperrgrund), fehlende Spalten 
   assert.equal(l?.gesperrt_am, '2026-11-03T10:00:00Z')
   assert.equal(l?.sperrgrund, 'Widerruf')
   assert.equal(mapLeadRow({ id: 'x', status: 'neu' })?.gesperrt_am, null)
+})
+
+const JETZT = new Date('2026-11-03T12:00:00.000Z')
+const EINW = '2026-10-20T08:00:00.000Z'
+
+test('Dialer-Reihenfolge: zugesagte Rueckrufe zuerst (aeltester Termin zuerst), dann neue Leads nach Eingang', () => {
+  const leads = [
+    lead({ id: 'neu-alt', eingang_zeit: '2026-10-01T10:00:00Z' }),
+    lead({ id: 'neu-neu', eingang_zeit: '2026-11-02T10:00:00Z' }),
+    lead({ id: 'rueck-spaet', eingang_zeit: '2026-09-01T10:00:00Z', naechster_anruf_ab: '2026-11-03T11:00:00Z' }),
+    lead({ id: 'rueck-frueh', eingang_zeit: '2026-11-01T10:00:00Z', naechster_anruf_ab: '2026-11-03T08:00:00Z' }),
+    lead({ id: 'zukunft', eingang_zeit: '2026-11-02T20:00:00Z', naechster_anruf_ab: '2026-11-04T08:00:00Z' }),
+  ]
+  const kopie = [...leads]
+  assert.deepEqual(dialerReihenfolge(leads, JETZT).map((l) => l.id), ['rueck-frueh', 'rueck-spaet', 'zukunft', 'neu-neu', 'neu-alt'])
+  assert.deepEqual(leads, kopie, 'Eingabe bleibt unveraendert')
+  assert.deepEqual(dialerReihenfolge([], JETZT), [])
+})
+
+test('Anrufpruefung: gesperrt, abgeschlossen, fremd, Einwilligung fehlt oder zu alt', () => {
+  const ich = 'me'
+  assert.equal(anrufPruefung(lead({ zugewiesen_an: ich }), EINW, ich, JETZT).ok, true)
+  assert.equal(anrufPruefung(lead({ zugewiesen_an: ich, status: 'beratung' }), EINW, ich, JETZT).ok, true)
+  assert.equal(anrufPruefung(lead(), EINW, ich, JETZT).ok, true, 'freier Lead im uebernehmbaren Status')
+  assert.match(anrufPruefung(lead({ gesperrt_am: '2026-11-01T10:00:00Z' }), EINW, ich, JETZT).grund ?? '', /Gesperrt/)
+  assert.match(anrufPruefung(lead({ zugewiesen_an: ich, status: 'kein_interesse' }), EINW, ich, JETZT).grund ?? '', /abgeschlossen/)
+  assert.match(anrufPruefung(lead({ zugewiesen_an: 'andere' }), EINW, ich, JETZT).grund ?? '', /jemand anderem/)
+  assert.match(anrufPruefung(lead({ status: 'beratung' }), EINW, ich, JETZT).grund ?? '', /Geschäftsführer/)
+  assert.match(anrufPruefung(lead(), null, ich, JETZT).grund ?? '', /Einwilligungsnachweis/)
+  assert.match(anrufPruefung(lead(), '2025-10-01T00:00:00Z', ich, JETZT).grund ?? '', /zu alt/)
+  assert.equal(anrufPruefung(lead(), undefined, ich, JETZT).ok, true, 'noch nicht geladen: nicht bemaengeln')
+  assert.equal(anrufPruefung(lead({ ist_test: true }), EINW, ich, JETZT).ok, false)
+})
+
+test('Dialer: nicht mehr anrufbare Eintraege der eingefrorenen Liste werden erkannt', () => {
+  const ich = 'me'
+  assert.equal(nochImDialerAnrufbar(lead(), true, ich, JETZT), true)
+  assert.equal(nochImDialerAnrufbar(lead({ zugewiesen_an: ich }), true, ich, JETZT), true)
+  assert.equal(nochImDialerAnrufbar(lead({ zugewiesen_an: 'andere' }), true, ich, JETZT), false)
+  assert.equal(nochImDialerAnrufbar(lead({ status: 'kein_interesse' }), true, ich, JETZT), false, 'extern abgeschlossen')
+  assert.equal(nochImDialerAnrufbar(lead({ gesperrt_am: '2026-11-03T10:00:00Z' }), true, ich, JETZT), false, 'gesperrt')
+  assert.equal(nochImDialerAnrufbar(lead({ status: 'beratung', zugewiesen_an: ich }), true, ich, JETZT), false, 'nicht mehr im Dialer-Status')
+  assert.equal(nochImDialerAnrufbar(undefined, true, ich, JETZT), false, 'nicht mehr sichtbar (jemand anderem zugewiesen)')
+  assert.equal(nochImDialerAnrufbar(undefined, false, ich, JETZT), true, 'Lead-Liste noch nicht geladen: nichts ueberspringen')
+})
+
+test('Statuszeitpunkt: status_geaendert_am, sonst updated_at', () => {
+  assert.equal(statusZeit(lead({ status_geaendert_am: '2026-11-01T00:00:00Z' })), '2026-11-01T00:00:00Z')
+  assert.equal(statusZeit(lead()), '2026-10-22T10:00:00.000Z')
+})
+
+test('Zusammenfuehren: eine aeltere Server-Antwort ueberschreibt keinen lokal neueren Lead', () => {
+  const lokalNeu = lead({ id: 'a', status: 'kontaktiert', updated_at: '2026-11-03T10:00:05Z' })
+  const lokal = [lokalNeu, lead({ id: 'b' })]
+  const vomServer = [lead({ id: 'a', status: 'neu' }), lead({ id: 'b', status: 'nicht_erreicht' }), lead({ id: 'c' })]
+  const geaendert = new Map([['a', 2000]])
+  const r = fuehreZusammen(vomServer, lokal, geaendert, 1000)
+  assert.equal(r.find((l) => l.id === 'a')?.status, 'kontaktiert', 'lokal nach Abfragebeginn geaendert: behalten')
+  assert.equal(r.find((l) => l.id === 'b')?.status, 'nicht_erreicht', 'sonst gilt der Serverstand')
+  assert.equal(r.length, 3)
+  // lokal nach Abfragebeginn geaendert und in der Antwort noch nicht enthalten: bleibt
+  assert.equal(fuehreZusammen([lead({ id: 'b' })], lokal, geaendert, 1000).some((l) => l.id === 'a'), true)
+  // Lead nicht mehr in der Serverantwort (nicht mehr sichtbar) und lokal nicht neu: verschwindet
+  assert.equal(fuehreZusammen([lead({ id: 'b' })], lokal, new Map(), 1000).some((l) => l.id === 'a'), false)
+  // Abfrage begann NACH der lokalen Aenderung: Serverstand gilt
+  assert.equal(fuehreZusammen(vomServer, lokal, geaendert, 3000).find((l) => l.id === 'a')?.status, 'neu')
+})
+
+test('Realtime-Ereignis: neuer Lead wird eingefuegt, aelterer Stand ueberschreibt keinen neueren', () => {
+  const liste = [lead({ id: 'a', updated_at: '2026-11-03T10:00:10Z', status: 'kontaktiert' })]
+  assert.equal(upsertLead(liste, lead({ id: 'n' })).length, 2)
+  assert.equal(upsertLead(liste, lead({ id: 'a', updated_at: '2026-11-03T10:00:00Z', status: 'neu' }))[0].status, 'kontaktiert')
+  assert.equal(upsertLead(liste, lead({ id: 'a', updated_at: '2026-11-03T10:00:20Z', status: 'beratung' }))[0].status, 'beratung')
+})
+
+test('Sperrgrund: Auswahl und Freitext, "Sonstiges" braucht eine Angabe, Laenge begrenzt', async () => {
+  const { sperrGrundText, SPERR_GRUENDE } = await import('./leads.ts')
+  assert.deepEqual(SPERR_GRUENDE.map((g) => g.id), ['widerruf', 'wunsch', 'verstorben', 'nicht_mehr_pkv', 'sonstiges'])
+  assert.equal(sperrGrundText('widerruf', ''), 'Widerruf der Einwilligung')
+  assert.equal(sperrGrundText('wunsch', ' per Telefon  '), 'Wunsch, nicht angerufen zu werden: per Telefon')
+  assert.equal(sperrGrundText('sonstiges', '  '), null)
+  assert.equal(sperrGrundText('sonstiges', 'Anwalt hat geschrieben'), 'Sonstiges: Anwalt hat geschrieben')
+  assert.equal(sperrGrundText('sonstiges', 'x'.repeat(600))?.length, 500)
 })

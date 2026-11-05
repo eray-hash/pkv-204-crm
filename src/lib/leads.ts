@@ -65,6 +65,8 @@ export interface DbLead {
   /** Zeitpunkt einer Sperre/eines Widerrufs; gesperrte Leads werden nie angerufen */
   gesperrt_am: string | null
   sperrgrund: string | null
+  /** Zeitpunkt der letzten Statusaenderung (Migration 20261103000100); fehlt sie noch, gilt updated_at */
+  status_geaendert_am: string | null
   created_at: string
   updated_at: string
 }
@@ -161,6 +163,7 @@ export function mapLeadRow(row: unknown): DbLead | null {
     naechster_anruf_ab: strOrNull(r.naechster_anruf_ab),
     gesperrt_am: strOrNull(r.gesperrt_am),
     sperrgrund: strOrNull(r.sperrgrund),
+    status_geaendert_am: strOrNull(r.status_geaendert_am),
     created_at: str(r.created_at),
     updated_at: str(r.updated_at),
   }
@@ -178,7 +181,7 @@ export function mapLeadRows(rows: unknown): DbLead[] {
 
 /** Neueste zuerst (nach Eingang). */
 export function sortNewestFirst(leads: DbLead[]): DbLead[] {
-  return [...leads].sort((a, b) => Date.parse(b.eingang_zeit) - Date.parse(a.eingang_zeit))
+  return [...leads].sort((a, b) => Date.parse(b.eingang_zeit) - Date.parse(a.eingang_zeit) || b.id.localeCompare(a.id))
 }
 
 export function countByStatus(leads: DbLead[]): Record<DbLeadStatus, number> {
@@ -217,7 +220,7 @@ export function dialerPatch(ergebnis: DialerErgebnis, now: Date = new Date(), sp
       return { status: 'nicht_erreicht', naechster_anruf_ab: plusHours(now, NICHT_ERREICHT_WARTEZEIT_STUNDEN) }
     case 'spaeter': {
       const t = spaeterAb ? Date.parse(spaeterAb) : NaN
-      if (Number.isNaN(t)) throw new Error('Bitte einen gueltigen Zeitpunkt waehlen.')
+      if (Number.isNaN(t)) throw new Error('Bitte einen gültigen Zeitpunkt wählen.')
       return { naechster_anruf_ab: new Date(t).toISOString() }
     }
     case 'termin_vereinbart':
@@ -249,6 +252,11 @@ export function imBereich(iso: string, bereich: ZeitBereich | null): boolean {
   if (!bereich) return true
   const t = Date.parse(iso)
   return !Number.isNaN(t) && t >= bereich.start.getTime() && t <= bereich.end.getTime()
+}
+
+/** Zeitpunkt, seit dem der Lead im aktuellen Status ist (Fallback auf updated_at, solange die Migration fehlt). */
+export function statusZeit(lead: Pick<DbLead, 'status_geaendert_am' | 'updated_at'>): string {
+  return lead.status_geaendert_am ?? lead.updated_at
 }
 
 export function beitragSumme(leads: DbLead[]): number {
@@ -300,6 +308,74 @@ export function queueFuerNutzer(queue: DbLead[], meId: string | null): DbLead[] 
   return queue.filter((l) => l.zugewiesen_an === null || (meId !== null && l.zugewiesen_an === meId))
 }
 
+/**
+ * Reihenfolge im Power Dialer: ZUERST zugesagte Rueckrufe (naechster_anruf_ab ist faellig, der aelteste Termin zuerst), DANACH alle
+ * anderen nach Eingang, neueste zuerst. Die Funktion aendert die Eingabe nicht.
+ */
+export function dialerReihenfolge(leads: DbLead[], jetzt: Date = new Date()): DbLead[] {
+  const faelligMs = (l: DbLead): number | null => {
+    if (!l.naechster_anruf_ab) return null
+    const t = Date.parse(l.naechster_anruf_ab)
+    return Number.isNaN(t) || t > jetzt.getTime() ? null : t
+  }
+  const rueckrufe = leads.filter((l) => faelligMs(l) !== null).sort((a, b) => (faelligMs(a) as number) - (faelligMs(b) as number) || a.id.localeCompare(b.id))
+  const neue = leads
+    .filter((l) => faelligMs(l) === null)
+    .sort((a, b) => Date.parse(b.eingang_zeit) - Date.parse(a.eingang_zeit) || a.id.localeCompare(b.id))
+  return [...rueckrufe, ...neue]
+}
+
+/** Status, in denen ein Lead angerufen werden darf (wie public.offene_status() in der Datenbank). */
+export const ANRUF_STATUS: DbLeadStatus[] = ['neu', 'kontaktiert', 'nicht_erreicht', 'termin_vereinbart', 'beratung']
+
+/** Maximales Alter einer Einwilligung (wie public.einwilligung_max_alter(): 365 Tage, anwaltlich zu klaeren). */
+export const EINWILLIGUNG_MAX_ALTER_TAGE = 365
+
+export interface AnrufPruefung {
+  ok: boolean
+  /** Verstaendlicher Grund, wenn nicht anrufbar */
+  grund: string | null
+}
+
+/**
+ * Darf der Nutzer diesen Lead jetzt anrufen? Spiegelt die Datenbankregeln (Gesperrt, Einwilligung vorhanden und nicht zu alt, Status offen,
+ * eigener Lead oder freier Lead in einem uebernehmbaren Status). `einwilligungZeit`: Zeitpunkt der Einwilligung, null = kein Nachweis,
+ * undefined = noch nicht geladen (dann wird die Einwilligung nicht bemaengelt; die Datenbank prueft ohnehin).
+ */
+export function anrufPruefung(
+  lead: Pick<DbLead, 'status' | 'zugewiesen_an' | 'gesperrt_am' | 'ist_test'>,
+  einwilligungZeit: string | null | undefined,
+  meId: string | null,
+  jetzt: Date = new Date(),
+): AnrufPruefung {
+  const nein = (grund: string): AnrufPruefung => ({ ok: false, grund })
+  if (lead.ist_test) return nein('Testleads werden nicht angerufen.')
+  if (lead.gesperrt_am) return nein('Gesperrt (Widerruf oder Wunsch, nicht angerufen zu werden): kein Anruf möglich.')
+  if (!ANRUF_STATUS.includes(lead.status)) return nein('Der Lead ist abgeschlossen und wird nicht mehr angerufen.')
+  if (lead.zugewiesen_an !== null && lead.zugewiesen_an !== meId) return nein('Der Lead wird von jemand anderem bearbeitet.')
+  if (lead.zugewiesen_an === null && !UEBERNAHME_STATUS.includes(lead.status)) {
+    return nein('Dieser freie Lead kann nur vom Geschäftsführer zugewiesen werden.')
+  }
+  if (einwilligungZeit === null) return nein('Es liegt kein Einwilligungsnachweis vor: kein Anruf möglich.')
+  if (typeof einwilligungZeit === 'string') {
+    const t = Date.parse(einwilligungZeit)
+    if (Number.isNaN(t) || t < jetzt.getTime() - EINWILLIGUNG_MAX_ALTER_TAGE * 86_400_000) {
+      return nein('Die Einwilligung ist zu alt: kein Anruf möglich.')
+    }
+  }
+  return { ok: true, grund: null }
+}
+
+/**
+ * Ist ein Eintrag der eingefrorenen Dialer-Liste noch anrufbar? `aktuell` ist der Lead aus der live aktualisierten Lead-Liste;
+ * fehlt er dort (z. B. weil er inzwischen jemand anderem zugewiesen wurde und nicht mehr sichtbar ist), gilt er als nicht mehr anrufbar,
+ * sofern die Lead-Liste ueberhaupt geladen ist (`listeGeladen`).
+ */
+export function nochImDialerAnrufbar(aktuell: DbLead | undefined, listeGeladen: boolean, meId: string | null, jetzt: Date = new Date()): boolean {
+  if (!aktuell) return !listeGeladen
+  return anrufPruefung(aktuell, undefined, meId, jetzt).ok && UEBERNAHME_STATUS.includes(aktuell.status)
+}
+
 /** Deutsche Meldung zu einem Fehler der Verteilungsfunktionen (supabase.rpc). */
 export function verteilungsFehler(err: { code?: string | null; message?: string | null } | null | undefined): string {
   const code = err?.code ?? ''
@@ -310,9 +386,10 @@ export function verteilungsFehler(err: { code?: string | null; message?: string 
   if (code === '53400' || msg.includes('obergrenze')) {
     return 'Sie haben bereits die maximale Zahl offener eigener Leads (50). Bitte zuerst Leads abarbeiten oder freigeben.'
   }
-  if (code === '42501' || msg.includes('geschaeftsfuehrer')) return 'Nur der Geschäftsführer darf diese Aktion ausführen.'
+  if (code === '42501' || msg.includes('geschaeftsfuehrer')) return 'Dafür fehlt die Berechtigung (nur der Geschäftsführer bzw. der Besitzer des Leads).'
   return 'Die Aktion konnte nicht ausgeführt werden. Bitte später erneut versuchen.'
 }
+
 
 /**
  * Deutsche Meldung, wenn der Browser einen Anruf nicht protokollieren darf (tel:-Pfad). Die Datenbank lehnt ab, wenn die Limits
@@ -353,4 +430,49 @@ export function wiedervorlagenFuer(leads: DbLead[], userId: string | null, now: 
     liste.push({ lead, faellig: lead.naechster_anruf_ab, ueberfaellig: t < now.getTime() })
   }
   return liste.sort((a, b) => Date.parse(a.faellig) - Date.parse(b.faellig))
+}
+
+// ---------- Zusammenfuehren von Ladungen und Realtime-Ereignissen ----------
+
+/** Fuehrt eine neu geladene Liste mit dem lokalen Stand zusammen: Leads, die lokal NACH Beginn der Abfrage geaendert wurden, behalten ihren neueren Stand. */
+export function fuehreZusammen(neu: DbLead[], lokal: DbLead[], lokalGeaendertAm: ReadonlyMap<string, number>, abfrageStart: number): DbLead[] {
+  const lokalNachId = new Map(lokal.map((l) => [l.id, l]))
+  const ergebnis = neu.map((l) => ((lokalGeaendertAm.get(l.id) ?? 0) > abfrageStart ? (lokalNachId.get(l.id) ?? l) : l))
+  const vorhanden = new Set(ergebnis.map((l) => l.id))
+  for (const l of lokal) {
+    if (!vorhanden.has(l.id) && (lokalGeaendertAm.get(l.id) ?? 0) > abfrageStart) ergebnis.push(l)
+  }
+  return ergebnis
+}
+
+/** Nimmt einen Lead aus einem Realtime-Ereignis in die Liste auf; ein aelterer Stand ueberschreibt nie einen neueren. */
+export function upsertLead(liste: DbLead[], lead: DbLead): DbLead[] {
+  const i = liste.findIndex((l) => l.id === lead.id)
+  if (i === -1) return [lead, ...liste]
+  if (Date.parse(liste[i].updated_at) > Date.parse(lead.updated_at)) return liste
+  const kopie = [...liste]
+  kopie[i] = lead
+  return kopie
+}
+
+
+// ---------- Sperre / Widerruf ----------
+
+export type SperrGrundArt = 'widerruf' | 'wunsch' | 'verstorben' | 'nicht_mehr_pkv' | 'sonstiges'
+
+export const SPERR_GRUENDE: { id: SperrGrundArt; label: string }[] = [
+  { id: 'widerruf', label: 'Widerruf der Einwilligung' },
+  { id: 'wunsch', label: 'Wunsch, nicht angerufen zu werden' },
+  { id: 'verstorben', label: 'Verstorben' },
+  { id: 'nicht_mehr_pkv', label: 'Nicht mehr PKV' },
+  { id: 'sonstiges', label: 'Sonstiges' },
+]
+
+/** Text des Sperrgrunds fuer die Datenbank. Bei "Sonstiges" ist eine Angabe Pflicht (sonst null). Hoechstens 500 Zeichen. */
+export function sperrGrundText(art: SperrGrundArt, freitext: string): string | null {
+  const label = SPERR_GRUENDE.find((g) => g.id === art)?.label
+  if (!label) return null
+  const zusatz = freitext.trim()
+  if (art === 'sonstiges') return zusatz ? `Sonstiges: ${zusatz}`.slice(0, 500) : null
+  return (zusatz ? `${label}: ${zusatz}` : label).slice(0, 500)
 }

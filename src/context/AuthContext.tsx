@@ -22,6 +22,8 @@ interface AuthContextValue {
   passwortVorlaeufig: boolean
   /** Verstaendliche Fehlermeldung, wenn der Link aus der E-Mail abgelaufen/ungueltig war */
   linkFehler: string | null
+  /** Meldung zum abgelaufenen Link wurde angezeigt: nicht erneut einblenden (z. B. nach dem Abmelden) */
+  linkFehlerVerbraucht: () => void
   signIn: (email: string, password: string) => Promise<string | null>
   signOut: () => Promise<void>
   sendPasswordReset: (email: string) => Promise<string | null>
@@ -43,10 +45,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const passwortVorlaeufig = session?.user.user_metadata?.passwort_wechseln === true
   const recovery = recoveryZustand || passwortVorlaeufig
   const recoveryRef = useRef(recovery)
-  recoveryRef.current = recovery
   const vorlaeufigRef = useRef(passwortVorlaeufig)
-  vorlaeufigRef.current = passwortVorlaeufig
-  const linkFehler = startLink?.fehler ?? null
+  useEffect(() => {
+    recoveryRef.current = recovery
+    vorlaeufigRef.current = passwortVorlaeufig
+  })
+  const [linkFehler, setLinkFehler] = useState<string | null>(startLink?.fehler ?? null)
+  const linkFehlerVerbraucht = useCallback(() => setLinkFehler(null), [])
 
   // Sitzung wiederherstellen und auf Aenderungen hoeren (Login, Logout, Token-Erneuerung)
   useEffect(() => {
@@ -163,13 +168,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       recovery,
       passwortVorlaeufig,
       linkFehler,
+      linkFehlerVerbraucht,
       signIn,
       signOut,
       sendPasswordReset,
       updatePassword,
       updateProfil,
     }),
-    [session, profile, sessionChecked, userId, profileError, recovery, passwortVorlaeufig, linkFehler, signIn, signOut, sendPasswordReset, updatePassword, updateProfil],
+    [session, profile, sessionChecked, userId, profileError, recovery, passwortVorlaeufig, linkFehler, linkFehlerVerbraucht, signIn, signOut, sendPasswordReset, updatePassword, updateProfil],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

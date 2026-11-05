@@ -3,7 +3,7 @@ import { Users } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useTeam } from '../context/TeamContext'
 import { useToast } from './ToastContext'
-import { effektivOnline } from '../lib/praesenz'
+import { effektivOnline, schalterZustand } from '../lib/praesenz'
 import { formatOrtszeit } from '../lib/zeit'
 
 /** Schalter "Ich nehme Live-Leads an" (setzt profiles.online). */
@@ -14,29 +14,33 @@ export function LiveSwitch({ langesLabel = false }: { langesLabel?: boolean }) {
   const [busy, setBusy] = useState(false)
   if (!profile) return null
 
-  const effektiv = effektivOnline(profile, jetzt)
-  const automatisch = effektiv && !profile.online
+  // Der Schalter zeigt immer den effektiven Zustand; ein Klick kehrt ihn eindeutig um (siehe schalterZustand)
+  const zustand = schalterZustand(profile, jetzt)
+  const automatisch = zustand.modus === 'automatisch'
 
   async function umschalten() {
     if (!profile) return
     setBusy(true)
-    const err = await updateProfil({ online: !profile.online })
+    const err = await updateProfil(zustand.klickPatch)
     setBusy(false)
     if (err) showToast(err, 'info')
+    else if (zustand.an && zustand.klickPatch.auto_online === false) {
+      showToast('Offline. Die automatische Erreichbarkeit ist aus (wieder aktivieren unter Mein Profil → Erreichbarkeit).', 'info')
+    }
   }
 
   return (
     <button
       type="button"
       role="switch"
-      aria-checked={profile.online}
+      aria-checked={zustand.an}
       disabled={busy}
       onClick={() => void umschalten()}
-      title={automatisch ? 'Ich nehme Live-Leads an (derzeit automatisch online durch Ihr Zeitfenster)' : 'Ich nehme Live-Leads an'}
+      title={`Ich nehme Live-Leads an. ${zustand.hinweis}`}
       className="flex items-center gap-2 rounded-lg border border-ink-200 bg-white px-2 py-1.5 text-xs font-semibold text-ink-600 hover:bg-ink-50 disabled:opacity-60"
     >
-      <span className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors ${effektiv ? 'bg-brand-600' : 'bg-ink-300'}`}>
-        <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${profile.online ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+      <span className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors ${zustand.an ? 'bg-brand-600' : 'bg-ink-300'}`}>
+        <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${zustand.an ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
       </span>
       <span className="whitespace-nowrap">
         {langesLabel ? 'Ich nehme Live-Leads an' : 'Live-Leads'}
@@ -85,8 +89,15 @@ export function PraesenzMenu() {
     function onClick(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) setOffen(false)
     }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOffen(false)
+    }
     document.addEventListener('mousedown', onClick)
-    return () => document.removeEventListener('mousedown', onClick)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onClick)
+      document.removeEventListener('keydown', onKey)
+    }
   }, [])
 
   const onlineAnzahl = mitglieder.filter((m) => effektivOnline(m, jetzt)).length

@@ -6,12 +6,15 @@ import { istFehlendeSpalte } from './profilesApi'
 
 const SEITE = 1000
 const MAX_SEITEN = 30
+/** Mehr als so viele Leads werden nicht geladen; dann zeigt das CRM einen Hinweis (statt still abzuschneiden). */
+export const MAX_LEADS = SEITE * MAX_SEITEN
 
 // Basis-Spalten (immer vorhanden) und Spalten, die erst mit spaeteren Migrationen entstehen. Fehlt eine Migration noch
 // (Postgres-Fehler 42703), wird automatisch mit der naechst kleineren Spaltenliste weitergearbeitet.
 const LEAD_SPALTEN =
   'id, name, telefon, email, gesellschaft, tarifbeitrag, quelle, eingang_zeit, status, ist_live, ist_test, moegliches_duplikat_von, zugewiesen_an, naechster_anruf_ab, created_at, updated_at'
 const SPALTEN_STUFEN = [
+  `${LEAD_SPALTEN}, zugewiesen_von, uebernommen_am, gesperrt_am, sperrgrund, status_geaendert_am`, // + 20261103000100_status_zeitpunkt.sql
   `${LEAD_SPALTEN}, zugewiesen_von, uebernommen_am, gesperrt_am, sperrgrund`, // + 20261103000000_qa_haertung.sql
   `${LEAD_SPALTEN}, zugewiesen_von, uebernommen_am`, // + 20261030000000_verteilung.sql
   LEAD_SPALTEN,
@@ -40,18 +43,21 @@ function fehler<T>(meldung: string, detail: unknown): Ergebnis<T> {
 }
 
 /** Alle echten Leads (keine Testleads), neueste zuerst. Liest seitenweise, weil PostgREST pro Anfrage begrenzt. */
-export async function fetchLeads(): Promise<Ergebnis<DbLead[]>> {
+export async function fetchLeads(): Promise<Ergebnis<DbLead[]> & { abgeschnitten: boolean }> {
   const alle: DbLead[] = []
+  let abgeschnitten = false
   for (let seite = 0; seite < MAX_SEITEN; seite++) {
     const von = seite * SEITE
     const { data, error } = await mitSpaltenFallback((spalten) =>
-      supabase.from('leads').select(spalten).eq('ist_test', false).order('eingang_zeit', { ascending: false }).range(von, von + SEITE - 1),
+      // eindeutige Sortierung (eingang_zeit, id), damit beim seitenweisen Lesen nichts doppelt oder gar nicht vorkommt
+      supabase.from('leads').select(spalten).eq('ist_test', false).order('eingang_zeit', { ascending: false }).order('id', { ascending: false }).range(von, von + SEITE - 1),
     )
-    if (error) return fehler('Die Leads konnten nicht geladen werden.', error)
+    if (error) return { ...fehler<DbLead[]>('Die Leads konnten nicht geladen werden.', error), abgeschnitten: false }
     alle.push(...mapLeadRows(data))
     if (!data || data.length < SEITE) break
+    if (seite === MAX_SEITEN - 1) abgeschnitten = true
   }
-  return { data: sortNewestFirst(alle), error: null }
+  return { data: sortNewestFirst(alle), error: null, abgeschnitten }
 }
 
 /** Anrufbare Leads aus der Datenbank-Ansicht (nur mit Einwilligungsnachweis, faellig), neueste zuerst. */
@@ -63,6 +69,7 @@ export async function fetchQueue(): Promise<Ergebnis<DbLead[]>> {
       .from('anrufbare_leads')
       .select(LEAD_SPALTEN)
       .order('eingang_zeit', { ascending: false })
+      .order('id', { ascending: false })
       .range(von, von + SEITE - 1)
     if (error) return fehler('Die Anrufliste konnte nicht geladen werden.', error)
     alle.push(...mapLeadRows(data))
@@ -113,6 +120,10 @@ async function verteilungAufrufen(funktion: string, args: Record<string, string>
 /** Atomar: nur der erste Aufrufer bekommt den freien Lead (ok=false: schon vergeben oder nicht uebernehmbar). */
 export const rpcUebernehmen = (leadId: string) => verteilungAufrufen('lead_uebernehmen', { p_lead_id: leadId })
 export const rpcFreigeben = (leadId: string) => verteilungAufrufen('lead_freigeben', { p_lead_id: leadId })
+/** Sperre/Widerruf (Besitzer oder Geschaeftsfuehrer): der Lead wird nie wieder angerufen, die Nummer kommt auf die Sperrliste. */
+export const rpcSperren = (leadId: string, grund: string) => verteilungAufrufen('lead_sperren', { p_lead_id: leadId, p_grund: grund })
+/** Nur Geschaeftsfuehrer. */
+export const rpcEntsperren = (leadId: string) => verteilungAufrufen('lead_entsperren', { p_lead_id: leadId })
 export const rpcZuweisen = (leadId: string, userId: string) => verteilungAufrufen('lead_zuweisen', { p_lead_id: leadId, p_user_id: userId })
 
 // ---------- Einwilligung, Notizen, Anrufe ----------

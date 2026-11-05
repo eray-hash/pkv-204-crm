@@ -5,7 +5,7 @@ import { useTeam } from '../../context/TeamContext'
 import { useToast } from '../../components/ToastContext'
 import { Badge, Button, Card, Field, inputClass } from '../../components/ui'
 import { effektivOnline, istImAutoFenster } from '../../lib/praesenz'
-import { pruefeErreichbarkeit } from '../../lib/profil'
+import { erreichbarkeitPatch, pruefeErreichbarkeit } from '../../lib/profil'
 import { formatOrtszeit, zeitzonenListe } from '../../lib/zeit'
 
 export default function Erreichbarkeit() {
@@ -15,7 +15,6 @@ export default function Erreichbarkeit() {
   const zonen = useMemo(() => zeitzonenListe(), [])
 
   const [zeitzone, setZeitzone] = useState(profile?.zeitzone ?? 'Europe/Berlin')
-  const [online, setOnline] = useState(profile?.online ?? false)
   const [autoOnline, setAutoOnline] = useState(profile?.auto_online ?? false)
   const [von, setVon] = useState(profile?.erreichbar_von ?? '')
   const [bis, setBis] = useState(profile?.erreichbar_bis ?? '')
@@ -25,11 +24,13 @@ export default function Erreichbarkeit() {
   if (!profile) return null
 
   // Vorschau mit den (noch nicht gespeicherten) Eingaben
+  const online = profile.online // wird nur ueber den Schalter im Kopf geaendert, nie ueber dieses Formular
   const vorschau = { zeitzone, online, auto_online: autoOnline, erreichbar_von: von || null, erreichbar_bis: bis || null }
   const effektiv = effektivOnline(vorschau, jetzt)
   const imFenster = istImAutoFenster(vorschau, jetzt)
 
   async function speichern() {
+    if (!profile) return
     setFehler(null)
     const problem = pruefeErreichbarkeit({ zeitzone, online, auto_online: autoOnline, erreichbar_von: von, erreichbar_bis: bis })
     if (problem) {
@@ -37,7 +38,14 @@ export default function Erreichbarkeit() {
       return
     }
     setBusy(true)
-    const err = await updateProfil({ zeitzone, online, auto_online: autoOnline, erreichbar_von: von || null, erreichbar_bis: bis || null })
+    // Nur geaenderte Felder senden; "online" gehoert dem Kopf-Schalter und wird hier nie mit einem alten Wert ueberschrieben
+    const patch = erreichbarkeitPatch(profile, { zeitzone, auto_online: autoOnline, erreichbar_von: von, erreichbar_bis: bis })
+    if (Object.keys(patch).length === 0) {
+      setBusy(false)
+      showToast('Keine Änderungen zu speichern')
+      return
+    }
+    const err = await updateProfil(patch)
     setBusy(false)
     if (err) setFehler(err)
     else showToast('Einstellungen gespeichert')
@@ -74,10 +82,10 @@ export default function Erreichbarkeit() {
         </div>
 
         <div className="mt-5 space-y-3">
-          <label className="flex items-center gap-2 text-sm text-ink-700">
-            <input type="checkbox" checked={online} onChange={(e) => setOnline(e.target.checked)} className="h-4 w-4 rounded border-ink-300 text-brand-600" />
-            Ich nehme Live-Leads an (manuell online)
-          </label>
+          <p className="text-sm text-ink-700">
+            Manuell online: <span className="font-semibold">{profile.online ? 'ja' : 'nein'}</span>
+            <span className="text-ink-400"> (Schalter „Live-Leads“ oben im Kopf)</span>
+          </p>
           <label className="flex items-center gap-2 text-sm text-ink-700">
             <input type="checkbox" checked={autoOnline} onChange={(e) => setAutoOnline(e.target.checked)} className="h-4 w-4 rounded border-ink-300 text-brand-600" />
             Automatisch online in meinem Zeitfenster

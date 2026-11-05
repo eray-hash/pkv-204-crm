@@ -1,5 +1,4 @@
-import type { ZeitraumFilter } from '../types'
-import { getAnzeigeZeitzone } from './zeit'
+import { getAnzeigeZeitzone } from './zeit.ts'
 
 export function formatEuro(value: number): string {
   return new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(value)
@@ -9,14 +8,25 @@ export function formatEuroExact(value: number): string {
   return new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(value)
 }
 
-// Alle Zeitstempel erscheinen in der Zeitzone des eingeloggten Nutzers (siehe setAnzeigeZeitzone in zeit.ts).
-export function formatDate(iso: string): string {
+/** Anzeige fuer fehlende oder ungueltige Werte (statt "Invalid Date" oder eines Absturzes). */
+export const KEIN_WERT = '–'
+
+function alsDatum(iso: string | null | undefined): Date | null {
+  if (!iso) return null
   const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+// Alle Zeitstempel erscheinen in der Zeitzone des eingeloggten Nutzers (siehe setAnzeigeZeitzone in zeit.ts).
+export function formatDate(iso: string | null | undefined): string {
+  const d = alsDatum(iso)
+  if (!d) return KEIN_WERT
   return new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: getAnzeigeZeitzone() }).format(d)
 }
 
-export function formatDateTime(iso: string): string {
-  const d = new Date(iso)
+export function formatDateTime(iso: string | null | undefined): string {
+  const d = alsDatum(iso)
+  if (!d) return KEIN_WERT
   return new Intl.DateTimeFormat('de-DE', {
     day: '2-digit',
     month: '2-digit',
@@ -27,74 +37,24 @@ export function formatDateTime(iso: string): string {
   }).format(d)
 }
 
-export function formatTime(iso: string): string {
-  const d = new Date(iso)
+export function formatTime(iso: string | null | undefined): string {
+  const d = alsDatum(iso)
+  if (!d) return KEIN_WERT
   return new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: getAnzeigeZeitzone() }).format(d)
 }
 
-export function startOfDay(d: Date): Date {
-  const c = new Date(d)
-  c.setHours(0, 0, 0, 0)
-  return c
+/** Initialen aus einem Namen (ein Buchstabe je Wort, mehrfache Leerzeichen werden ignoriert, hoechstens zwei). */
+export function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((p) => p[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase()
 }
 
-export function endOfDay(d: Date): Date {
-  const c = new Date(d)
-  c.setHours(23, 59, 59, 999)
-  return c
-}
-
-export function zeitraumToRange(filter: ZeitraumFilter, custom?: { start: string; end: string }): { start: Date; end: Date } | null {
-  const now = new Date()
-  switch (filter) {
-    case 'heute':
-      return { start: startOfDay(now), end: endOfDay(now) }
-    case 'gestern': {
-      const y = new Date(now)
-      y.setDate(y.getDate() - 1)
-      return { start: startOfDay(y), end: endOfDay(y) }
-    }
-    case 'letzte7': {
-      const s = new Date(now)
-      s.setDate(s.getDate() - 6)
-      return { start: startOfDay(s), end: endOfDay(now) }
-    }
-    case 'letzte14': {
-      const s = new Date(now)
-      s.setDate(s.getDate() - 13)
-      return { start: startOfDay(s), end: endOfDay(now) }
-    }
-    case 'letzte30': {
-      const s = new Date(now)
-      s.setDate(s.getDate() - 29)
-      return { start: startOfDay(s), end: endOfDay(now) }
-    }
-    case 'diesermonat': {
-      const s = new Date(now.getFullYear(), now.getMonth(), 1)
-      return { start: startOfDay(s), end: endOfDay(now) }
-    }
-    case 'letztermonat': {
-      const s = new Date(now.getFullYear(), now.getMonth() - 1, 1)
-      const e = new Date(now.getFullYear(), now.getMonth(), 0)
-      return { start: startOfDay(s), end: endOfDay(e) }
-    }
-    case 'custom': {
-      if (!custom?.start || !custom?.end) return null
-      return { start: startOfDay(new Date(custom.start)), end: endOfDay(new Date(custom.end)) }
-    }
-    case 'alle':
-    default:
-      return null
-  }
-}
-
-export function inRange(iso: string, range: { start: Date; end: Date } | null): boolean {
-  if (!range) return true
-  const t = new Date(iso).getTime()
-  return t >= range.start.getTime() && t <= range.end.getTime()
-}
-
-export const ZEITRAUM_LABELS: Record<ZeitraumFilter, string> = {
+export const ZEITRAUM_LABELS = {
   heute: 'Heute',
   gestern: 'Gestern',
   letzte7: 'Letzte 7 Tage',
@@ -104,4 +64,4 @@ export const ZEITRAUM_LABELS: Record<ZeitraumFilter, string> = {
   letztermonat: 'Letzter Monat',
   alle: 'Alle',
   custom: 'Benutzerdefiniert',
-}
+} as const

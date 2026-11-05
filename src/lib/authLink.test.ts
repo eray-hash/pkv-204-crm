@@ -50,13 +50,15 @@ test('Hash: Token ohne Art gilt als sonstiger Link und verlangt kein neues Passw
 })
 
 test('Passwort: Mindestlaenge 8 und Wiederholung muessen stimmen', () => {
-  assert.match(pruefeNeuesPasswort('kurz', 'kurz') ?? '', /mindestens 8/)
-  assert.match(pruefeNeuesPasswort('langgenug1', 'anders123') ?? '', /stimmen nicht überein/)
-  assert.equal(pruefeNeuesPasswort('langgenug1', 'langgenug1'), null)
+  assert.match(pruefeNeuesPasswort('kurz', 'kurz') ?? '', /mindestens 12/)
+  assert.match(pruefeNeuesPasswort('elfzeichen1', 'elfzeichen1') ?? '', /mindestens 12/)
+  assert.match(pruefeNeuesPasswort('langgenug123', 'anders123456') ?? '', /stimmen nicht überein/)
+  assert.equal(pruefeNeuesPasswort('langgenug123', 'langgenug123'), null)
 })
 
 test('Passwort aendern: Fehlermeldungen sind deutsch und passen zum Passwortwechsel', () => {
   assert.match(mapAuthError({ code: 'weak_password' }), /zu schwach/)
+  assert.doesNotMatch(mapAuthError({ code: 'weak_password' }), /8 Zeichen/)
   assert.match(mapAuthError({ code: 'same_password' }), /unterscheiden/)
   assert.match(mapAuthError({ code: 'reauthentication_needed' }), /erneut anmelden/)
   assert.match(mapAuthError({ code: 'session_not_found' }), /erneut anmelden/)

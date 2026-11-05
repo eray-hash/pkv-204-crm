@@ -1,23 +1,30 @@
-import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { CalendarCheck, Clock3, Info, Loader2, PartyPopper, Phone, PhoneOff, RefreshCw, Smartphone, ThumbsDown } from 'lucide-react'
+import { Ban, CalendarCheck, Clock3, Info, Loader2, PartyPopper, Phone, PhoneOff, RefreshCw, Smartphone, ThumbsDown } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useLeads } from '../../context/LeadsContext'
 import { useToast } from '../../components/ToastContext'
 import NummerKopieren from '../../components/NummerKopieren'
 import { Badge, Button, Card, ErrorBlock, LoadingBlock, SectionHeader, inputClass } from '../../components/ui'
-import { addNotiz, fetchNotizen, logAnruf, type Notiz } from '../../lib/leadsApi'
+import SperrDialog from '../../components/SperrDialog'
+import { addNotiz, fetchNotizen, fetchQueue, logAnruf, type Notiz } from '../../lib/leadsApi'
 import { anrufenSipgate, telefonieStatus as ladeTelefonieStatus } from '../../lib/telefonieApi'
 import { sollAufTelFallen } from '../../lib/telefonie'
 import {
   ageInDays,
   dialerPatch,
+  dialerReihenfolge,
+  queueFuerNutzer,
+  nochImDialerAnrufbar,
+  statusLabel,
+  statusTone,
   telHref,
   type AnrufKanal,
   type DbLead,
   type DialerErgebnis,
 } from '../../lib/leads'
 import { formatDateTime, formatEuroExact } from '../../lib/utils'
+import { bereiteTelAnrufVor } from '../../lib/telAnruf'
 import { eingabeZeitzone, lokalZuIso, morgenFrueh } from '../../lib/zeit'
 
 const ABSCHLUSS_TEXT: Partial<Record<DialerErgebnis, string>> = {
@@ -29,7 +36,7 @@ const ABSCHLUSS_TEXT: Partial<Record<DialerErgebnis, string>> = {
 
 export default function PowerDialer() {
   const { session } = useAuth()
-  const { leads, queue, loading, queueError, reload, updateLead, uebernehmen, refreshLead } = useLeads()
+  const { leads, queue, loading, queueError, reload, updateLead, uebernehmen, refreshLead, sperren } = useLeads()
   const meId = session?.user.id ?? null
   const { showToast } = useToast()
   const navigate = useNavigate()
@@ -40,6 +47,10 @@ export default function PowerDialer() {
   const [bearbeitet, setBearbeitet] = useState<Set<string>>(new Set())
 
   const [notiz, setNotiz] = useState('')
+  // Entwurf der Notiz samt zugehoeriger Lead (Ref, damit der Wechsel zum naechsten Lead den Text nicht stillschweigend verwirft)
+  const notizRef = useRef<{ text: string; fuer: { id: string; name: string } | null }>({ text: '', fuer: null })
+  const [verworfen, setVerworfen] = useState<{ id: string; name: string; text: string }[]>([])
+  const [sperrDialog, setSperrDialog] = useState(false)
   const [vorherige, setVorherige] = useState<Notiz[]>([])
   const [angerufen, setAngerufen] = useState<{ kanal: AnrufKanal; zeit: string; sipgate?: boolean } | null>(null)
   // sipgate-Telefonie: 'laden' bis der Status bekannt ist; bei Fehlern/ohne Verbindung faellt "Mobil" auf tel: zurueck
@@ -68,23 +79,21 @@ export default function PowerDialer() {
     }
   }, [])
 
-  // Aktueller Stand der Zuweisung: aus der (live aktualisierten) Lead-Liste, sonst aus dem eingefrorenen Stand
+  // Aktueller Stand eines Leads: aus der (live aktualisierten) Lead-Liste, sonst aus dem eingefrorenen Stand
   const frischer = useCallback((l: DbLead): DbLead => leads.find((x) => x.id === l.id) ?? l, [leads])
-  const istFremd = useCallback(
-    (l: DbLead) => {
-      const a = frischer(l).zugewiesen_an
-      return a !== null && a !== meId
-    },
-    [frischer, meId],
+  // Nicht mehr anrufbar: jemand anderem zugewiesen (oder nicht mehr sichtbar), extern abgeschlossen, gesperrt, Status geaendert
+  const nochAnrufbar = useCallback(
+    (l: DbLead) => nochImDialerAnrufbar(leads.find((x) => x.id === l.id), leads.length > 0, meId),
+    [leads, meId],
   )
 
-  // Inzwischen von jemand anderem uebernommene Leads werden sauber uebersprungen (die Liste springt sonst nicht um)
+  // Nicht mehr anrufbare Leads werden sauber uebersprungen (die Liste springt sonst nicht um)
   const aktuellIndex = useMemo(() => {
     if (!liste) return 0
     let i = index
-    while (i < liste.length && istFremd(liste[i])) i++
+    while (i < liste.length && !nochAnrufbar(liste[i])) i++
     return i
-  }, [liste, index, istFremd])
+  }, [liste, index, nochAnrufbar])
   const uebersprungen = useMemo(() => (liste ? liste.slice(index, aktuellIndex) : []), [liste, index, aktuellIndex])
 
   const aktuell = liste && aktuellIndex < liste.length ? frischer(liste[aktuellIndex]) : null
@@ -93,6 +102,12 @@ export default function PowerDialer() {
 
   // Notizen des aktuellen Leads laden und Eingabefelder zuruecksetzen
   useEffect(() => {
+    // Ungespeicherte Notiz zu einem anderen Lead (z. B. uebersprungen) nicht stillschweigend verwerfen
+    const alt = notizRef.current
+    if (alt.text.trim() && alt.fuer && alt.fuer.id !== aktuellId) {
+      setVerworfen((p) => [...p, { id: alt.fuer!.id, name: alt.fuer!.name, text: alt.text }])
+    }
+    notizRef.current = { text: '', fuer: null }
     setNotiz('')
     setAngerufen(null)
     setMobilFehler(null)
@@ -123,6 +138,27 @@ export default function PowerDialer() {
     setBearbeitet(new Set())
   }, [queue])
 
+  // "Aktualisieren" in der Leer-Ansicht: Anrufliste frisch holen und direkt uebernehmen (nicht nur im Hintergrund neu laden)
+  const [aktualisiert, setAktualisiert] = useState(false)
+  async function aktualisieren() {
+    setAktualisiert(true)
+    const res = await fetchQueue()
+    setAktualisiert(false)
+    if (!res.data) {
+      showToast(res.error ?? 'Die Anrufliste konnte nicht geladen werden.', 'info')
+      return
+    }
+    setListe(dialerReihenfolge(queueFuerNutzer(res.data, meId)))
+    setIndex(0)
+    setBearbeitet(new Set())
+    void reload()
+  }
+
+  function aendereNotiz(text: string) {
+    setNotiz(text)
+    notizRef.current = { text, fuer: aktuell ? { id: aktuell.id, name: aktuell.name } : null }
+  }
+
   // Freien Lead uebernehmen (atomar). Gibt true zurueck, wenn der Lead jetzt mir gehoert.
   async function sichereUebernahme(lead: DbLead, still = false): Promise<boolean> {
     if (lead.zugewiesen_an === meId) return true
@@ -142,28 +178,21 @@ export default function PowerDialer() {
     return false
   }
 
-  // Protokolliert den Anruf. Lehnt die Datenbank ab (Limits, gesperrt, keine Einwilligung), wird NICHT gewaehlt.
-  async function anrufen(kanal: AnrufKanal): Promise<boolean> {
-    if (!aktuell || !session) return false
-    const err = await logAnruf(aktuell.id, session.user.id, kanal)
-    if (err) {
-      showToast(err, 'info')
-      return false
-    }
-    setAngerufen({ kanal, zeit: new Date().toISOString() })
-    return true
-  }
-
-  // tel:-Link: Ein freier Lead wird VOR dem Waehlen uebernommen, der Anruf protokolliert, und erst danach gewaehlt.
-  // Wird die Uebernahme oder das Protokoll abgelehnt, wird nicht gewaehlt.
+  // tel:-Link: freien Lead uebernehmen, Anruf protokollieren, erst danach wird gewaehlt (gemeinsamer Ablauf mit dem Lead-Detail).
+  // Wird die Uebernahme oder das Protokoll abgelehnt (Limits, gesperrt, keine Einwilligung), wird NICHT gewaehlt.
   async function telKlick(e: MouseEvent<HTMLAnchorElement>, kanal: AnrufKanal) {
     e.preventDefault()
     if (!aktuell || telBusy) return
     const href = e.currentTarget.href
     setTelBusy(true)
     try {
-      if (aktuellFrei && !(await sichereUebernahme(aktuell, true))) return
-      if (!(await anrufen(kanal))) return
+      const res = await bereiteTelAnrufVor(aktuell, kanal, { meId, uebernehmen, refreshLead, logAnruf })
+      if (!res.ok) {
+        showToast(res.meldung, 'info')
+        return
+      }
+      if (res.uebernommen) showToast(`${aktuell.name} übernommen`)
+      setAngerufen({ kanal, zeit: new Date().toISOString() })
       window.location.href = href
     } finally {
       setTelBusy(false)
@@ -192,7 +221,7 @@ export default function PowerDialer() {
       return
     }
     setAngerufen({ kanal: 'mobil', zeit: new Date().toISOString(), sipgate: true })
-    showToast('Dein Telefon klingelt gleich.')
+    showToast('Ihr Telefon klingelt gleich.')
     if (aktuellFrei) void refreshLead(aktuell.id) // der Lead gehoert jetzt mir
   }
 
@@ -223,7 +252,7 @@ export default function PowerDialer() {
       showToast(err, 'info')
       return false
     }
-    setNotiz('')
+    aendereNotiz('')
     const n = await fetchNotizen(aktuell.id)
     if (n.data) setVorherige(n.data)
     return true
@@ -234,6 +263,27 @@ export default function PowerDialer() {
     const ok = await notizSpeichern()
     setBusy(false)
     if (ok && notiz.trim()) showToast('Notiz gespeichert')
+  }
+
+  // Widerruf / nicht mehr anrufen: ein freier Lead wird dafuer zuerst uebernommen (nur der Besitzer oder der Geschaeftsfuehrer darf sperren)
+  async function sperreAktuellen(grund: string) {
+    if (!aktuell) return
+    setBusy(true)
+    if (aktuellFrei && !(await sichereUebernahme(aktuell, true))) {
+      setBusy(false)
+      setSperrDialog(false)
+      return
+    }
+    const res = await sperren(aktuell.id, grund)
+    setBusy(false)
+    setSperrDialog(false)
+    if (res.fehler || !res.ok) {
+      showToast(res.fehler ?? 'Der Lead konnte nicht gesperrt werden.', 'info')
+      return
+    }
+    showToast(`${aktuell.name}: gesperrt – wird nie wieder angerufen`)
+    setBearbeitet((prev) => new Set(prev).add(aktuell.id))
+    setIndex(aktuellIndex + 1)
   }
 
   async function ergebnis(e: DialerErgebnis, spaeterAb?: string) {
@@ -273,7 +323,30 @@ export default function PowerDialer() {
 
   if (loading && liste === null) return <LoadingBlock text="Anrufliste wird geladen …" />
 
-  const kopf = <SectionHeader title="Power Dialer" subtitle="Anrufbare Leads (mit Einwilligungsnachweis), neueste zuerst" />
+  const kopf = <SectionHeader title="Power Dialer" subtitle="Anrufbare Leads (mit Einwilligungsnachweis): zugesagte Rückrufe zuerst, dann neue Leads" />
+
+  const notizWarnung =
+    verworfen.length > 0 ? (
+      <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="status">
+        <p className="mb-2 font-semibold">Nicht gespeicherte Notizen (der Lead wurde übersprungen oder die Liste neu geladen)</p>
+        <ul className="space-y-2">
+          {verworfen.map((v, i) => (
+            <li key={`${v.id}-${i}`} className="rounded-lg bg-white px-3 py-2 shadow-sm">
+              <p className="text-xs font-medium text-ink-500">{v.name}</p>
+              <p className="whitespace-pre-line text-ink-700">{v.text}</p>
+              <div className="mt-1 flex gap-3 text-xs">
+                <button type="button" className="font-medium text-brand-700 hover:underline" onClick={() => void navigator.clipboard?.writeText(v.text).then(() => showToast('Notiz kopiert'))}>
+                  Kopieren
+                </button>
+                <button type="button" className="font-medium text-ink-500 hover:underline" onClick={() => setVerworfen((p) => p.filter((_, j) => j !== i))}>
+                  Verwerfen
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </div>
+    ) : null
 
   if (queueError && liste === null) {
     return (
@@ -288,11 +361,22 @@ export default function PowerDialer() {
     return (
       <div>
         {kopf}
+        {notizWarnung}
+        {queue.length > 0 && (
+          <div className="mb-4 rounded-xl border border-brand-100 bg-brand-50/60 p-3" aria-live="polite">
+            <p className="mb-2 text-sm font-semibold text-brand-800">
+              {queue.length} neue{queue.length === 1 ? 'r' : ''} Lead{queue.length === 1 ? '' : 's'} eingegangen
+            </p>
+            <Button onClick={neuLaden}>
+              <RefreshCw size={15} /> Anrufliste laden ({queue.length})
+            </Button>
+          </div>
+        )}
         <Card className="p-8 text-center text-sm text-ink-500">
           Aktuell gibt es keine anrufbaren Leads. Neue Leads erscheinen hier automatisch, sobald sie eingehen.
           <div className="mt-4 flex justify-center">
-            <Button variant="secondary" onClick={() => void reload()}>
-              <RefreshCw size={15} /> Aktualisieren
+            <Button variant="secondary" disabled={aktualisiert} onClick={() => void aktualisieren()}>
+              {aktualisiert ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />} Aktualisieren
             </Button>
           </div>
         </Card>
@@ -304,6 +388,7 @@ export default function PowerDialer() {
     return (
       <div>
         {kopf}
+        {notizWarnung}
         <Card className="flex flex-col items-center gap-3 p-10 text-center">
           <PartyPopper size={36} className="text-brand-500" />
           <h2 className="text-lg font-semibold text-ink-800">Liste abgeschlossen</h2>
@@ -324,10 +409,11 @@ export default function PowerDialer() {
   return (
     <div>
       {kopf}
+      {notizWarnung}
 
       {uebersprungen.length > 0 && (
         <p className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800" role="status">
-          Übersprungen (inzwischen von jemand anderem übernommen): {uebersprungen.map((l) => l.name).join(', ')}
+          Übersprungen (nicht mehr anrufbar, z. B. von jemand anderem übernommen, abgeschlossen oder gesperrt): {uebersprungen.map((l) => l.name).join(', ')}
         </p>
       )}
 
@@ -374,9 +460,7 @@ export default function PowerDialer() {
 
       <Card className="mx-auto max-w-xl p-5 sm:p-8">
         <div className="flex flex-wrap items-center justify-center gap-2 text-center">
-          <Badge tone={aktuell.status === 'nicht_erreicht' ? 'amber' : aktuell.status === 'kontaktiert' ? 'brand' : 'ink'}>
-            {aktuell.status === 'nicht_erreicht' ? 'Nicht erreicht' : aktuell.status === 'kontaktiert' ? 'Kontaktiert' : 'Neu'}
-          </Badge>
+          <Badge tone={statusTone(aktuell.status)}>{statusLabel(aktuell.status)}</Badge>
           {aktuellFrei ? <Badge tone="green">Neu, frei</Badge> : <Badge tone="brand">Mein Lead</Badge>}
           {aktuell.moegliches_duplikat_von && (
             <Link to={`/leads/${aktuell.moegliches_duplikat_von}`}>
@@ -438,7 +522,8 @@ export default function PowerDialer() {
           <a
             href={telHref(aktuell.telefon)}
             onClick={(e) => void telKlick(e, 'festnetz')}
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-600 px-3.5 py-3 text-sm font-medium text-white shadow-sm hover:bg-brand-700"
+            aria-disabled={telBusy}
+            className={`${telBusy ? 'pointer-events-none opacity-60 ' : ''}inline-flex items-center justify-center gap-2 rounded-lg bg-brand-600 px-3.5 py-3 text-sm font-medium text-white shadow-sm hover:bg-brand-700`}
           >
             <Phone size={17} /> Anrufen (Telefon-App)
           </a>
@@ -446,7 +531,8 @@ export default function PowerDialer() {
             <a
               href={telHref(aktuell.telefon)}
               onClick={(e) => void telKlick(e, 'mobil')}
-              className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-600 px-3.5 py-3 text-sm font-medium text-white shadow-sm hover:bg-brand-700"
+              aria-disabled={telBusy}
+              className={`${telBusy ? 'pointer-events-none opacity-60 ' : ''}inline-flex items-center justify-center gap-2 rounded-lg bg-brand-600 px-3.5 py-3 text-sm font-medium text-white shadow-sm hover:bg-brand-700`}
             >
               <Smartphone size={17} /> Mobil (Satellite)
             </a>
@@ -490,7 +576,7 @@ export default function PowerDialer() {
           <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700" role="status">
             {angerufen.sipgate
               ? `Anruf über sipgate ausgelöst (${formatDateTime(angerufen.zeit)}) – Ihr Telefon klingelt gleich.`
-              : `Anruf über ${angerufen.kanal === 'mobil' ? 'Mobil (Satellite)' : 'Anrufen (Telefon-App)'} protokolliert (${formatDateTime(angerufen.zeit)}).`}
+              : `Anruf ${angerufen.kanal === 'mobil' ? 'über Mobil (Satellite)' : 'über die Telefon-App'} protokolliert (${formatDateTime(angerufen.zeit)}).`}
           </p>
         )}
 
@@ -502,7 +588,7 @@ export default function PowerDialer() {
             id="dialer-notiz"
             className={`${inputClass} min-h-[80px]`}
             value={notiz}
-            onChange={(e) => setNotiz(e.target.value)}
+            onChange={(e) => aendereNotiz(e.target.value)}
             maxLength={10000}
             placeholder="Wird beim Speichern oder mit dem Ergebnis abgelegt …"
           />
@@ -556,6 +642,11 @@ export default function PowerDialer() {
               Schon umgestellt
             </Button>
           </div>
+          <div className="mt-3">
+            <Button variant="ghost" className="w-full justify-center border border-red-200 text-red-700 hover:bg-red-50" disabled={busy} onClick={() => setSperrDialog(true)}>
+              <Ban size={16} /> Widerruf / nicht mehr anrufen
+            </Button>
+          </div>
 
           {spaeterOffen && (
             <div className="mt-3 rounded-xl bg-ink-50 p-3">
@@ -563,6 +654,7 @@ export default function PowerDialer() {
                 Erneut anrufen ab
               </label>
               <input id="dialer-spaeter" type="datetime-local" className={inputClass} value={spaeterWert} onChange={(e) => setSpaeterWert(e.target.value)} />
+              <p className="mt-1 text-xs text-ink-400">Zeitzone: {eingabeZeitzone().replace(/_/g, ' ')} (Ihre Einstellung unter Mein Profil → Erreichbarkeit)</p>
               <div className="mt-2 flex justify-end gap-2">
                 <Button variant="ghost" onClick={() => setSpaeterOffen(false)}>
                   Abbrechen
@@ -589,6 +681,7 @@ export default function PowerDialer() {
           )}
         </div>
       </Card>
+      {sperrDialog && <SperrDialog leadName={aktuell.name} busy={busy} onBestaetigen={(g) => void sperreAktuellen(g)} onClose={() => setSperrDialog(false)} />}
     </div>
   )
 }

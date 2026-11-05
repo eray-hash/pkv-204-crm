@@ -1,50 +1,52 @@
 # §204 PKV-Tarifoptimierung – Lead-Management CRM
 
-Klickbares CRM-Mockup für ein Lead-Management-System im Bereich §204-PKV-Tarifoptimierung (private Krankenversicherung, Deutschland).
-
-Dies ist ein reines Frontend-Mockup mit realistischen deutschen Mock-Daten und lokalem State (Persistenz via `localStorage`). Es gibt keine echten Backend-Integrationen (E-Mail, Kalendersync, Telefonie) – alle entsprechenden Aktionen sind simulierte UI-Interaktionen (Modal/Toast/Statuswechsel).
+Web-CRM für die Bearbeitung von Leads aus der §204-PKV-Tarifoptimierung (private Krankenversicherung, Deutschland): Leads aus dem Webhook
+des Lieferanten, Power Dialer mit sipgate-Anbindung, Lead-Verteilung im Team, Wiedervorlagen, Team-Übersicht und Konto-Verwaltung.
 
 ## Tech-Stack
 
-- React 18 + Vite + TypeScript + Tailwind CSS
+- React 19, Vite, TypeScript, Tailwind CSS
 - React Router (`HashRouter`, geeignet für GitHub Pages)
-- State-Management via React Context + `useReducer`, Persistenz in `localStorage`
+- Supabase (Postgres mit Row Level Security, Auth, Realtime, Edge Functions) als Backend, siehe [`supabase/README.md`](supabase/README.md)
 - Icons: lucide-react
 
+## Was angebunden ist und was nicht
+
+Angebunden: Anmeldung, Leads (Liste, Detail, Notizen, Status, Sperre/Widerruf), Lead-Verteilung und Team-Präsenz, Power Dialer, Wiedervorlagen
+(aus dem Feld „nächster Anruf ab“), Dashboard-Kennzahlen, Team-Seite (nur Geschäftsführer), Telefonie (sipgate Classic; Neo nach Dokumentation, noch
+nicht in der Praxis erprobt), Passwort ändern und vorläufige Passwörter.
+
+Noch nicht angebunden (zeigen „Dieser Bereich ist noch nicht angebunden.“): Kalender, Nachrichten, Buchhaltung, Reklamationen, Hilfe/Onboarding,
+Provisionen. Es gibt keine Beispieldaten mehr; alle Zahlen stammen aus der Datenbank.
+
 ## Entwicklung
+
+Node 24 wird empfohlen (die Tests laufen direkt auf TypeScript-Dateien).
 
 ```bash
 npm install
 npm run dev
 ```
 
-## Build
+Die Verbindung zu Supabase steht in `.env.development` und `.env.production` (nur öffentliche Werte, niemals einen secret/service_role-Schlüssel eintragen).
+Lokale Abweichungen gehören in `.env.development.local` (wird nicht committet).
+
+## Prüfen und bauen
 
 ```bash
+npm run typecheck   # TypeScript
+npm run lint        # oxlint
+npm test            # Frontend-Logik, Edge-Function-Logik und eine Postgres-Prüfung der Migrationen (PGlite)
 npm run build
 ```
 
-## Funktionsumfang
+Veröffentlicht wird bei jedem Push auf `main` über GitHub Pages (`.github/workflows/deploy.yml`, bisher nur Build).
 
-- Dashboard mit Zeitraum-Filtern, Benachrichtigungen, Postfach-Badge, Power-Dialer-Schnellzugriff und News-Ticker
-- Leads: Kundenbereich, Verlorene Leads, Alte Leads, Lead-Detailansicht mit Status-Pipeline, Notizen und Aktivitäten-Timeline
-- Power Dialer: automatische Anwahl der aktiven Leadliste
-- Wiedervorlagen mit Hervorhebung überfälliger Termine
-- Kalender mit Tages-/Wochen-/Monatsansicht, Terminbuchung, Kalenderfreigabe und externer Kalenderanbindung (Mockup)
-- Nachrichten (Postfach-Mockup) inkl. E-Mail-Verknüpfung
-- Buchhaltung mit KPI-Kacheln, Umsatzverlauf-Diagramm und Auszahlungsprozess
-- Hilfe/Onboarding mit Schulungsvideos (Mockup) und Upload-Funktion
-- Mein Profil mit Unter-Tabs: Profildaten, Kalender-Einstellungen, Sales-Provision, Team-Provision
+**Offen:** `ci/deploy.yml.vorschlag` ist die erweiterte Variante (Node 24, Typprüfung, Lint, Tests vor dem Build; bei einem Fehler wird nicht veröffentlicht).
+Sie konnte nicht gepusht werden, weil das verwendete Zugriffstoken keine Workflow-Dateien ändern darf (fehlender `workflow`-Scope). Zum Aktivieren die Datei
+nach `.github/workflows/deploy.yml` kopieren und mit einem berechtigten Konto committen.
 
-Über den Button „Daten zurücksetzen“ in der Seitenleiste lässt sich der Mock-Datenbestand jederzeit auf den Ausgangszustand zurücksetzen.
+## Backend
 
-## Anbindung an Supabase (Stand Oktober 2026)
-
-- Echte Leads, Login, Power Dialer, Notizen und Anrufprotokoll laufen gegen die Supabase-Datenbank (siehe `supabase/README.md`).
-  Kalender, Buchhaltung, Nachrichten, Reklamationen, Team-Zahlen, Provisionen und Onboarding zeigen weiterhin Beispieldaten
-  (auf den Seiten mit dem Hinweis „Beispieldaten“ gekennzeichnet).
-- Konfiguration über `.env.development` / `.env.production` (nur öffentliche Werte: URL und publishable Key; der Schutz läuft über
-  Row Level Security). Lokale Überschreibungen gehören in `.env.development.local` (git-ignoriert; Vite gibt modusspezifischen
-  Dateien Vorrang vor `.env.local`). Niemals einen secret/service_role-Key im Frontend verwenden.
-- Es gibt keine Registrierung im Frontend; Nutzer werden im Supabase-Dashboard eingeladen.
-- Tests der Mapping-Logik: `npm test`.
+Migrationen, Edge Functions, Einspielreihenfolge und bekannte Grenzen stehen in [`supabase/README.md`](supabase/README.md). Datenbank und Funktionen
+werden bewusst nicht automatisch ausgerollt, sondern von Hand eingespielt.

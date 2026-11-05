@@ -231,16 +231,14 @@ export default function Telefonie() {
               ))}
             </div>
             <p className="mt-2 text-xs text-ink-500">
-              Woran man den Kontotyp erkennt, ist in der sipgate-API-Dokumentation nicht beschrieben (ein Personal Access Token verrät es nicht). Im
-              Zweifel bitte den sipgate-Support fragen.
+              Welchen Kontotyp Sie haben, steht in Ihrem sipgate-Vertrag. Im Zweifel fragen Sie bitte beim sipgate-Support nach.
             </p>
             {anbieter === 'sipgate_neo' && (
               <div className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800" role="note">
-                <p className="font-semibold">Neo: noch nicht erprobt, Zugangsweg ungeklärt</p>
+                <p className="font-semibold">Neo: noch nicht in der Praxis erprobt</p>
                 <p className="mt-1">
-                  Zugangsweg für Neo-Konten ungeklärt; Token-Anlage im Web für neue Verträge evtl. nicht möglich, bitte sipgate-Support fragen. Der
-                  Neo-Anruf ist nur so weit umgesetzt, wie die sipgate-Dokumentation ihn belegt (POST /calls), und wurde nie gegen ein echtes Konto
-                  getestet. Bis das geklärt ist, hilft „Nummer kopieren“, um einen Lead manuell über die sipgate-App anzurufen.
+                  Für sipgate Neo ist die Anbindung noch nicht in der Praxis getestet. Ob Sie für ein Neo-Konto ein Zugriffs-Token anlegen können, klären Sie
+                  bitte vorab mit dem sipgate-Support. Bis dahin können Sie mit „Nummer kopieren“ einen Lead manuell über die sipgate-App anrufen.
                 </p>
               </div>
             )}
@@ -272,10 +270,13 @@ export default function Telefonie() {
           </ol>
           <form onSubmit={verbinden} className="space-y-3" autoComplete="off">
             <Field label="Token-ID">
-              <PasswortFeld
+              <input
+                className={inputClass}
                 value={tokenId}
                 onChange={(e) => setTokenId(e.target.value)}
                 autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
                 placeholder="token-ABC123"
               />
             </Field>
@@ -299,7 +300,7 @@ export default function Telefonie() {
             </div>
             <p className="flex items-start gap-1.5 text-xs text-ink-400">
               <ShieldCheck size={13} className="mt-0.5 shrink-0" />
-              Das Token wird nur einmal übertragen, auf dem Server verschlüsselt gespeichert und nie wieder angezeigt. Neo ist nach Doku umgesetzt, aber ungetestet.
+              Das Token wird nur einmal übertragen, auf dem Server verschlüsselt gespeichert und nie wieder angezeigt.
             </p>
           </form>
         </Card>

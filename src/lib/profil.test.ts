@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { parseProfile, pruefeErreichbarkeit, uhrzeitKurz } from './profil.ts'
+import {
+  erreichbarkeitPatch, parseProfile, pruefeErreichbarkeit, uhrzeitKurz } from './profil.ts'
 
 test('parseProfile: komplette Zeile (nach der Migration)', () => {
   const p = parseProfile({
@@ -59,4 +60,14 @@ test('pruefeErreichbarkeit: Fehler auf Deutsch', () => {
   assert.match(pruefeErreichbarkeit({ ...ok, erreichbar_von: '09:00', erreichbar_bis: '09:00' })!, /nicht gleich/)
   assert.match(pruefeErreichbarkeit({ ...ok, erreichbar_von: '99:00' })!, /ungültig/)
   assert.equal(pruefeErreichbarkeit({ ...ok, auto_online: false, erreichbar_von: '', erreichbar_bis: '' }), null)
+})
+
+test('Erreichbarkeit speichern: nur geaenderte Felder, nie "online"', () => {
+  const aktuell = { zeitzone: 'Europe/Berlin', auto_online: false, erreichbar_von: null, erreichbar_bis: null }
+  assert.deepEqual(erreichbarkeitPatch(aktuell, { zeitzone: 'Europe/Berlin', auto_online: false, erreichbar_von: '', erreichbar_bis: '' }), {})
+  assert.deepEqual(erreichbarkeitPatch(aktuell, { zeitzone: 'Asia/Bangkok', auto_online: false, erreichbar_von: '', erreichbar_bis: '' }), { zeitzone: 'Asia/Bangkok' })
+  const p = erreichbarkeitPatch(aktuell, { zeitzone: 'Europe/Berlin', auto_online: true, erreichbar_von: '08:00', erreichbar_bis: '18:00' })
+  assert.deepEqual(p, { auto_online: true, erreichbar_von: '08:00', erreichbar_bis: '18:00' })
+  assert.ok(!('online' in p))
+  assert.deepEqual(erreichbarkeitPatch({ ...aktuell, erreichbar_von: '08:00', erreichbar_bis: '18:00' }, { zeitzone: 'Europe/Berlin', auto_online: false, erreichbar_von: '', erreichbar_bis: '18:00' }), { erreichbar_von: null })
 })

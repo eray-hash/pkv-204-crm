@@ -58,6 +58,19 @@ export interface ErreichbarkeitEingabe {
   erreichbar_bis: string
 }
 
+/**
+ * Nur die tatsaechlich geaenderten Felder (Zeitzone, Automatik, Zeitfenster). "online" gehoert nicht dazu: den Online-Schalter setzt der
+ * Kopf-Schalter, Speichern im Formular darf ihn nie mit einem alten Wert ueberschreiben.
+ */
+export function erreichbarkeitPatch(aktuell: Pick<Profile, 'zeitzone' | 'auto_online' | 'erreichbar_von' | 'erreichbar_bis'>, e: Omit<ErreichbarkeitEingabe, 'online'>) {
+  const patch: { zeitzone?: string; auto_online?: boolean; erreichbar_von?: string | null; erreichbar_bis?: string | null } = {}
+  if (e.zeitzone !== aktuell.zeitzone) patch.zeitzone = e.zeitzone
+  if (e.auto_online !== aktuell.auto_online) patch.auto_online = e.auto_online
+  if ((e.erreichbar_von || null) !== aktuell.erreichbar_von) patch.erreichbar_von = e.erreichbar_von || null
+  if ((e.erreichbar_bis || null) !== aktuell.erreichbar_bis) patch.erreichbar_bis = e.erreichbar_bis || null
+  return patch
+}
+
 /** Prueft die Eingaben der Erreichbarkeits-Einstellungen. Gibt eine deutsche Fehlermeldung oder null zurueck. */
 export function pruefeErreichbarkeit(e: ErreichbarkeitEingabe): string | null {
   if (!istGueltigeZeitzone(e.zeitzone)) return 'Bitte eine gültige Zeitzone wählen.'

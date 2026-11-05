@@ -9,7 +9,6 @@ import {
   Wallet,
   LifeBuoy,
   UserCircle,
-  Bell,
   Phone,
   ChevronDown,
   BarChart3,
@@ -20,6 +19,8 @@ import {
 import { useAuth } from '../context/AuthContext'
 import { useLeads } from '../context/LeadsContext'
 import { LiveSwitch, PraesenzListe, PraesenzMenu } from './Praesenz'
+import { initials } from '../lib/utils'
+import { useMedia } from '../lib/useMedia'
 
 const leadSubLinks = [
   { to: '/leads', label: 'Alle Leads', end: true },
@@ -32,25 +33,35 @@ const leadSubLinks = [
 
 export default function Layout() {
   const { profile, signOut } = useAuth()
-  const { leads, queue, loading: leadsLoading } = useLeads()
+  const { leads, queue, loading: leadsLoading, liveFehler, ladeHinweis } = useLeads()
   const navigate = useNavigate()
   const location = useLocation()
   const [leadsOpen, setLeadsOpen] = useState(true)
-  const [notifOpen, setNotifOpen] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
-  const notifRef = useRef<HTMLDivElement>(null)
   const userMenuRef = useRef<HTMLDivElement>(null)
+  // Auf kleinen Bildschirmen ist die Seitenleiste ein Schubfach: geschlossen ist sie nicht per Tab erreichbar (inert)
+  const istDesktop = useMedia('(min-width: 1024px)')
   const istGeschaeftsfuehrer = profile?.rolle === 'geschaeftsfuehrer'
   const anzeigeName = profile?.name ?? ''
 
   useEffect(() => {
     function onClick(e: MouseEvent) {
-      if (notifRef.current && !notifRef.current.contains(e.target as Node)) setNotifOpen(false)
       if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) setUserMenuOpen(false)
     }
+    // Esc schliesst Schubfach und Menues
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        setMobileNavOpen(false)
+        setUserMenuOpen(false)
+      }
+    }
     document.addEventListener('mousedown', onClick)
-    return () => document.removeEventListener('mousedown', onClick)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onClick)
+      document.removeEventListener('keydown', onKey)
+    }
   }, [])
 
   useEffect(() => {
@@ -59,7 +70,7 @@ export default function Layout() {
   }, [location.pathname])
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-ink-50">
+    <div className="flex h-dvh w-full overflow-hidden bg-ink-50">
       {/* Backdrop (mobile drawer) */}
       {mobileNavOpen && (
         <div className="fixed inset-0 z-30 bg-ink-900/40 lg:hidden" onClick={() => setMobileNavOpen(false)} aria-hidden="true" />
@@ -67,6 +78,8 @@ export default function Layout() {
 
       {/* Sidebar */}
       <aside
+        inert={!istDesktop && !mobileNavOpen ? true : undefined}
+        aria-label="Hauptnavigation"
         className={`fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85vw] shrink-0 flex-col border-r border-ink-100 bg-white transition-transform duration-200 ease-out lg:static lg:z-auto lg:w-64 lg:max-w-none lg:translate-x-0 ${
           mobileNavOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
@@ -174,26 +187,6 @@ export default function Layout() {
               )}
             </button>
 
-            <button onClick={() => navigate('/nachrichten')} title="Nachrichten" className="relative rounded-lg p-2 text-ink-500 hover:bg-ink-100">
-              <Mail size={19} />
-            </button>
-
-            <div className="relative" ref={notifRef}>
-              <button
-                onClick={() => setNotifOpen((v) => !v)}
-                title="Benachrichtigungen"
-                className="relative rounded-lg p-2 text-ink-500 hover:bg-ink-100"
-              >
-                <Bell size={19} />
-              </button>
-              {notifOpen && (
-                <div className="absolute right-0 z-40 mt-2 w-[85vw] max-w-xs rounded-xl border border-ink-100 bg-white p-2 shadow-lg">
-                  <p className="px-2 py-1 text-sm font-semibold text-ink-800">Benachrichtigungen</p>
-                  <p className="p-3 text-sm text-ink-400">Keine Benachrichtigungen</p>
-                </div>
-              )}
-            </div>
-
             <div className="relative ml-2 border-l border-ink-100 pl-3" ref={userMenuRef}>
               <button
                 onClick={() => setUserMenuOpen((v) => !v)}
@@ -236,20 +229,21 @@ export default function Layout() {
         </header>
 
         <main className="flex-1 overflow-x-hidden overflow-y-auto px-4 py-4 lg:px-6 lg:py-6">
+          {liveFehler && (
+            <p className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800" role="status">
+              Die Live-Verbindung ist unterbrochen. Neue Leads erscheinen mit etwas Verzögerung (die Daten werden alle 30 Sekunden aktualisiert).
+            </p>
+          )}
+          {ladeHinweis && (
+            <p className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800" role="status">
+              {ladeHinweis}
+            </p>
+          )}
           <Outlet />
         </main>
       </div>
     </div>
   )
-}
-
-function initials(name: string): string {
-  return name
-    .split(' ')
-    .map((p) => p[0])
-    .slice(0, 2)
-    .join('')
-    .toUpperCase()
 }
 
 function NavItem({ to, icon, label, end }: { to: string; icon: ReactNode; label: string; end?: boolean }) {

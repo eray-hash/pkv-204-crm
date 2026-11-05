@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { formatDate, formatEuroExact } from '../lib/utils'
 import { filterZuweisung, statusLabel, statusTone, type DbLead, type ZuweisungsFilter } from '../lib/leads'
 import { useAuth } from '../context/AuthContext'
@@ -79,7 +79,15 @@ export default function LeadTable({
                 className="cursor-pointer border-b border-ink-50 last:border-0 hover:bg-ink-50/70"
               >
                 <td className="px-4 py-3 font-medium text-ink-800">
-                  {lead.name}
+                  {/* Echter Link fuer Tastatur und Screenreader; die ganze Zeile bleibt zusaetzlich klickbar */}
+                  <Link to={`/leads/${lead.id}`} onClick={(e) => e.stopPropagation()} className="hover:text-brand-700 hover:underline focus-visible:underline">
+                    {lead.name}
+                  </Link>
+                  {lead.gesperrt_am && (
+                    <Badge tone="red" className="ml-2">
+                      Gesperrt
+                    </Badge>
+                  )}
                   {lead.moegliches_duplikat_von && (
                     <Badge tone="amber" className="ml-2">
                       Mögliches Duplikat

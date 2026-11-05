@@ -158,3 +158,9 @@ Migration `migrations/20261103000000_qa_haertung.sql` (wiederholbar; verlangt in
 - Der Wert fuer das Maximalalter der Einwilligung (365 Tage), die Obergrenze (50) und die Anruflimits sind Vorschlaege; sie stehen an je einer Stelle (SQL-Funktionen bzw. `anruf_limit_grund`).
 - Das Rate-Limit der Funktion `mitarbeiter-passwort` liegt weiter im Instanzspeicher.
 - Die Funktion `nutzer_sitzungen_beenden` greift auf das Auth-Schema zu; ob die Rolle `postgres` dort in jedem Projekt loeschen darf, ist ungeprueft (im Fehlerfall bleibt das Passwort gesetzt, nur die alten Sitzungen laufen weiter).
+
+## Frontend-Runde 2 (03.11.2026)
+
+- Migration `migrations/20261103000100_status_zeitpunkt.sql` (nach `20261103000000_qa_haertung.sql`, wiederholbar): Spalte `leads.status_geaendert_am` (Trigger bei Statuswechsel, Backfill = `updated_at`, `updated_at` bleibt dabei unveraendert) und neu erstellte Ansicht `anrufbare_leads`. Dashboard ("Gewonnen", "Termine") und Team-Seite zaehlen danach nach diesem Zeitpunkt; ohne die Migration faellt das Frontend automatisch auf `updated_at` zurueck.
+- Das Frontend liest die Lead-Spalten stufenweise (mit/ohne `status_geaendert_am`, `gesperrt_am`/`sperrgrund`, `zugewiesen_von`/`uebernommen_am`) und funktioniert deshalb auch dann, wenn eine Migration noch fehlt.
+- Neu im Frontend (nutzt die RPCs `lead_sperren`/`lead_entsperren` und `lead_einwilligung` aus der QA-Haertung): Sperr-Dialog "Widerruf / nicht mehr anrufen" im Lead-Detail und im Power Dialer, Entsperren fuer den Geschaeftsfuehrer, tel:-Anrufe nur nach Uebernahme und erfolgreichem Protokoll.

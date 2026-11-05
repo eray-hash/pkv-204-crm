@@ -40,8 +40,8 @@ export default function Wiedervorlagen() {
                             <span className="flex items-center gap-1">
                               <Phone size={12} /> {lead.telefon}
                             </span>
-                            <span className="flex items-center gap-1">
-                              <Mail size={12} /> {lead.email}
+                            <span className="flex min-w-0 items-center gap-1 break-all">
+                              <Mail size={12} className="shrink-0" /> {lead.email}
                             </span>
                           </p>
                         </div>

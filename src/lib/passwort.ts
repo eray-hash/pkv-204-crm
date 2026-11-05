@@ -1,5 +1,5 @@
 // Pruefung fuer neue Passwoerter (Login-Seite "Passwort festlegen" und Mein Profil → Passwort aendern).
-export const MIN_PASSWORT_LAENGE = 8
+export const MIN_PASSWORT_LAENGE = 12
 
 /** Gibt eine deutsche Fehlermeldung zurueck oder null, wenn die Eingabe gueltig ist. */
 export function pruefeNeuesPasswort(passwort: string, wiederholung: string): string | null {

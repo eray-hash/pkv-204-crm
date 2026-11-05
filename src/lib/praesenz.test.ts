@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { effektivOnline, imZeitfenster, istImAutoFenster, parseUhrzeit, type Erreichbarkeit } from './praesenz.ts'
+import {
+  schalterZustand, effektivOnline, imZeitfenster, istImAutoFenster, parseUhrzeit, type Erreichbarkeit } from './praesenz.ts'
 
 const person = (over: Partial<Erreichbarkeit> = {}): Erreichbarkeit => ({
   zeitzone: 'Europe/Berlin',
@@ -103,4 +104,34 @@ test('effektiv online: manuell, automatisch oder beides; ohne Fenster nie automa
   assert.equal(effektivOnline(person({ erreichbar_von: '10:00' , erreichbar_bis: null }), jetzt), false)
   assert.equal(effektivOnline(person({ erreichbar_von: '10:00', erreichbar_bis: '10:00' }), jetzt), false)
   assert.equal(effektivOnline(person({ zeitzone: 'Mars/Base' }), jetzt), true) // faellt auf Europe/Berlin zurueck
+})
+
+const FENSTER = { zeitzone: 'Europe/Berlin', online: false, auto_online: true, erreichbar_von: '08:00', erreichbar_bis: '18:00' }
+const IM_FENSTER = new Date('2026-11-03T10:00:00Z') // 11:00 Berlin
+const AUSSERHALB = new Date('2026-11-03T19:00:00Z') // 20:00 Berlin
+
+test('Schalter: im automatischen Fenster zeigt er "an" (automatisch), Ausschalten beendet die Automatik', () => {
+  const z = schalterZustand(FENSTER, IM_FENSTER)
+  assert.equal(z.an, true)
+  assert.equal(z.modus, 'automatisch')
+  assert.deepEqual(z.klickPatch, { online: false, auto_online: false })
+  assert.match(z.hinweis, /automatisch/)
+})
+
+test('Schalter: manuell online, ausserhalb des Fensters oder ganz offline', () => {
+  const manuell = schalterZustand({ ...FENSTER, online: true }, AUSSERHALB)
+  assert.deepEqual([manuell.an, manuell.modus, manuell.klickPatch], [true, 'manuell', { online: false }])
+  const manuellImFenster = schalterZustand({ ...FENSTER, online: true }, IM_FENSTER)
+  assert.deepEqual(manuellImFenster.klickPatch, { online: false, auto_online: false })
+  const aus = schalterZustand(FENSTER, AUSSERHALB)
+  assert.deepEqual([aus.an, aus.modus, aus.klickPatch], [false, 'aus', { online: true }])
+  assert.equal(schalterZustand({ ...FENSTER, auto_online: false, online: false }, IM_FENSTER).an, false)
+})
+
+test('Schalter: Anzeige und Wirkung widersprechen sich nie (nach dem Klick ist der Zustand umgekehrt)', () => {
+  for (const [p, jetzt] of [[FENSTER, IM_FENSTER], [FENSTER, AUSSERHALB], [{ ...FENSTER, online: true }, IM_FENSTER], [{ ...FENSTER, online: true }, AUSSERHALB]] as const) {
+    const z = schalterZustand(p, jetzt)
+    const nachKlick = { ...p, ...z.klickPatch }
+    assert.equal(effektivOnline(nachKlick, jetzt), !z.an)
+  }
 })

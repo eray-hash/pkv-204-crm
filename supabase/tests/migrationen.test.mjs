@@ -160,6 +160,16 @@ await als('authenticated', A, () => q(`insert into public.lead_notizen (lead_id,
 assert.equal((await als('authenticated', A, () => q('select id from public.lead_notizen'))).rows.length, 1)
 assert.equal((await als('authenticated', B, () => q('select id from public.lead_notizen'))).rows.length, 0)
 await als('authenticated', B, () => fehler(q(`insert into public.lead_notizen (lead_id, user_id, text) values ($1,$2,'x')`, [l1.o_lead_id, B]), '42501'))
+// Zeitpunkt der letzten Statusaenderung (20261103000100)
+const z0 = (await q('select status_geaendert_am z, updated_at u from public.leads where id=$1', [l2.o_lead_id])).rows[0]
+assert.ok(z0.z, 'status_geaendert_am ist gesetzt')
+await db.exec(`update public.leads set naechster_anruf_ab = now() + interval '1 day' where id='${l2.o_lead_id}'`)
+const z1 = (await q('select status_geaendert_am z from public.leads where id=$1', [l2.o_lead_id])).rows[0]
+assert.equal(z1.z.getTime(), z0.z.getTime(), 'andere Aenderungen lassen den Statuszeitpunkt unberuehrt')
+await new Promise((r) => setTimeout(r, 20))
+await db.exec(`update public.leads set status='kontaktiert' where id='${l2.o_lead_id}'`)
+const z2 = (await q('select status_geaendert_am z from public.leads where id=$1', [l2.o_lead_id])).rows[0]
+assert.ok(z2.z.getTime() > z0.z.getTime(), 'Statuswechsel setzt den Zeitpunkt neu')
 // Sitzungen
 await db.exec(`insert into auth.sessions (user_id) values ('${B}'); insert into auth.refresh_tokens (user_id) values ('${B}')`)
 await als('service_role', null, () => q('select public.nutzer_sitzungen_beenden($1)', [B]))

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, type ReactNode } from 'react'
 import { Loader2 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { supabaseKonfiguriert } from '../lib/supabase'
@@ -8,9 +8,17 @@ function Vollbild({ children }: { children: ReactNode }) {
   return <div className="flex min-h-screen items-center justify-center bg-ink-50 px-4">{children}</div>
 }
 
+/** Zeigt die Meldung zu einem abgelaufenen Link genau einmal: Die Login-Seite uebernimmt sie beim Anzeigen, danach wird sie verbraucht. */
+function LoginMitLinkFehler({ fehler, verbraucht }: { fehler: string | null; verbraucht: () => void }) {
+  useEffect(() => {
+    if (fehler) verbraucht()
+  }, [fehler, verbraucht])
+  return <Login key="login" startFehler={fehler} />
+}
+
 /** Zeigt die App nur nach erfolgreicher Anmeldung. Ohne Sitzung erscheint (auf jeder Adresse) die Login-Seite. */
 export default function AuthGate({ children }: { children: ReactNode }) {
-  const { session, profile, loading, profileError, recovery, passwortVorlaeufig, linkFehler, signOut } = useAuth()
+  const { session, profile, loading, profileError, recovery, passwortVorlaeufig, linkFehler, linkFehlerVerbraucht, signOut } = useAuth()
 
   if (!supabaseKonfiguriert) {
     return (
@@ -33,7 +41,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   }
 
   if (session && recovery) return <Login key="recovery" start="neuesPasswort" vorlaeufig={passwortVorlaeufig} abmelden={() => void signOut()} />
-  if (!session) return <Login key="login" startFehler={linkFehler} />
+  if (!session) return <LoginMitLinkFehler fehler={linkFehler} verbraucht={linkFehlerVerbraucht} />
 
   if (!profile) {
     return (

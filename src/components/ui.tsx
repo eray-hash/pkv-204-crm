@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react'
+import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from 'react'
+import { fokusFalleZiel } from '../lib/fokus'
 import { LEER_TEXT, NICHT_ANGEBUNDEN_TEXT } from '../lib/texte'
 import { X, MoveHorizontal, Info, Loader2, AlertCircle } from 'lucide-react'
 
@@ -58,9 +59,9 @@ export function KpiTile({
   }
   return (
     <Card className="p-4">
-      <p className="text-xs font-medium uppercase tracking-wide text-ink-400">{label}</p>
-      <p className={`mt-1.5 text-2xl font-semibold ${accents[accent]}`}>{value}</p>
-      {hint && <p className="mt-1 text-xs text-ink-400">{hint}</p>}
+      <p className="break-words text-xs font-medium uppercase tracking-wide text-ink-400">{label}</p>
+      <p className={`mt-1.5 break-words text-2xl font-semibold ${accents[accent]}`}>{value}</p>
+      {hint && <p className="mt-1 break-words text-xs text-ink-400">{hint}</p>}
     </Card>
   )
 }
@@ -135,17 +136,54 @@ export function Modal({
   children: ReactNode
   wide?: boolean
 }) {
+  const titelId = useId()
+  const dialogRef = useRef<HTMLDivElement>(null)
+
+  // Beim Oeffnen den Fokus in den Dialog holen, beim Schliessen dorthin zurueckgeben, wo er vorher war
+  useEffect(() => {
+    if (!open) return
+    const vorher = document.activeElement as HTMLElement | null
+    const dialog = dialogRef.current
+    dialog?.querySelector<HTMLElement>(FOKUSSIERBAR)?.focus({ preventScroll: true })
+    if (dialog && !dialog.contains(document.activeElement)) dialog.focus()
+    return () => vorher?.focus?.({ preventScroll: true })
+  }, [open])
+
   if (!open) return null
+
+  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    if (e.key === 'Escape') {
+      e.stopPropagation()
+      onClose()
+      return
+    }
+    if (e.key !== 'Tab' || !dialogRef.current) return
+    const elemente = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(FOKUSSIERBAR))
+    const ziel = fokusFalleZiel(elemente.indexOf(document.activeElement as HTMLElement), elemente.length, e.shiftKey)
+    if (ziel !== null) {
+      e.preventDefault()
+      elemente[ziel].focus()
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/40 p-4" onClick={onClose}>
       <div
-        className={`max-h-[90vh] w-full overflow-y-auto rounded-2xl bg-white p-6 shadow-xl ${wide ? 'max-w-2xl' : 'max-w-md'}`}
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titelId}
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
+        className={`max-h-[90vh] w-full overflow-y-auto rounded-2xl bg-white p-6 shadow-xl focus:outline-none ${wide ? 'max-w-2xl' : 'max-w-md'}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-ink-900">{title}</h2>
-          <button onClick={onClose} className="rounded-lg p-1 text-ink-400 hover:bg-ink-100 hover:text-ink-700">
-            <X size={18} />
+          <h2 id={titelId} className="text-lg font-semibold text-ink-900">
+            {title}
+          </h2>
+          <button type="button" onClick={onClose} aria-label="Schließen" className="rounded-lg p-1 text-ink-400 hover:bg-ink-100 hover:text-ink-700">
+            <X size={18} aria-hidden="true" />
           </button>
         </div>
         {children}
@@ -153,6 +191,8 @@ export function Modal({
     </div>
   )
 }
+
+const FOKUSSIERBAR = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -176,10 +216,23 @@ export function Tabs({
   onChange: (id: string) => void
 }) {
   return (
-    <div className="flex flex-wrap gap-1 rounded-xl bg-ink-100 p-1">
+    <div className="flex flex-wrap gap-1 rounded-xl bg-ink-100 p-1" role="tablist">
       {tabs.map((tab) => (
         <button
           key={tab.id}
+          type="button"
+          role="tab"
+          aria-selected={active === tab.id}
+          tabIndex={active === tab.id ? 0 : -1}
+          onKeyDown={(e) => {
+            // Pfeiltasten wechseln den Reiter (Tablist-Muster)
+            if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return
+            const i = tabs.findIndex((t) => t.id === active)
+            const n = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length]
+            onChange(n.id)
+            ;(e.currentTarget.parentElement?.querySelector(`[data-tab="${n.id}"]`) as HTMLElement | null)?.focus()
+          }}
+          data-tab={tab.id}
           onClick={() => onChange(tab.id)}
           className={`rounded-lg px-3.5 py-1.5 text-sm font-medium transition-colors ${
             active === tab.id ? 'bg-white text-brand-700 shadow-sm' : 'text-ink-500 hover:text-ink-700'

@@ -25,7 +25,7 @@ export function mapAuthError(error: unknown, fallback = 'Die Anmeldung ist fehlg
     return 'Zu viele Versuche. Bitte einen Moment warten und es dann erneut versuchen.'
   }
   if (code === 'weak_password' || message.includes('password should be at least')) {
-    return 'Das Passwort ist zu schwach. Bitte mindestens 8 Zeichen verwenden.'
+    return 'Das Passwort ist zu schwach. Bitte ein längeres und weniger leicht zu erratendes Passwort wählen.'
   }
   if (code === 'same_password' || message.includes('different from the old password')) {
     return 'Das neue Passwort muss sich vom bisherigen unterscheiden.'

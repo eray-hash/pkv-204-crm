@@ -29,7 +29,6 @@ export default function PasswortFeld({ className = '', ...rest }: Props) {
       <input ref={ref} {...rest} type={eingabeTyp(sichtbar)} className={`${inputClass} pr-12 ${className}`} spellCheck={false} autoCapitalize="none" autoCorrect="off" />
       <button
         type="button"
-        tabIndex={-1}
         aria-label={buttonLabel(sichtbar)}
         aria-pressed={sichtbar}
         title={buttonLabel(sichtbar)}

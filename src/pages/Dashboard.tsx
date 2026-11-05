@@ -4,8 +4,10 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useLeads } from '../context/LeadsContext'
 import { Card, EmptyState, ErrorBlock, KpiTile, LoadingBlock, SectionHeader, inputClass } from '../components/ui'
-import { formatDateTime, formatEuroExact, zeitraumToRange, ZEITRAUM_LABELS } from '../lib/utils'
-import { beitragSumme, countByStatus, imBereich, statusLabel, wiedervorlagenFuer, type DbLeadStatus } from '../lib/leads'
+import { formatDateTime, formatEuroExact, ZEITRAUM_LABELS } from '../lib/utils'
+import { zeitraumBereich } from '../lib/zeitraum'
+import { eingabeZeitzone } from '../lib/zeit'
+import { beitragSumme, countByStatus, imBereich, statusLabel, statusZeit, wiedervorlagenFuer, type DbLeadStatus } from '../lib/leads'
 import type { ZeitraumFilter } from '../types'
 import { PhoneCall, TrendingUp, Users2, Trophy, CalendarClock } from 'lucide-react'
 
@@ -20,15 +22,19 @@ export default function Dashboard() {
   const [customStart, setCustomStart] = useState('')
   const [customEnd, setCustomEnd] = useState('')
 
-  const range = useMemo(() => {
-    if (filter === 'custom') return zeitraumToRange('custom', { start: customStart, end: customEnd })
-    return zeitraumToRange(filter)
-  }, [filter, customStart, customEnd])
+  // Tagesgrenzen in der Zeitzone des Profils; ein unvollstaendiger/ungueltiger eigener Bereich ergibt einen Hinweis statt "Alle"
+  const zeitzone = eingabeZeitzone()
+  const { bereich: range, hinweis: bereichHinweis } = useMemo(
+    () => zeitraumBereich(filter, { tz: zeitzone, custom: { start: customStart, end: customEnd } }),
+    [filter, customStart, customEnd, zeitzone],
+  )
 
   const neueLeads = useMemo(() => leads.filter((l) => imBereich(l.eingang_zeit, range)), [leads, range])
-  const gewonnen = useMemo(() => leads.filter((l) => l.status === 'gewonnen' && imBereich(l.updated_at, range)), [leads, range])
-  const termine = useMemo(() => leads.filter((l) => l.status === 'termin_vereinbart' && imBereich(l.updated_at, range)), [leads, range])
+  const gewonnen = useMemo(() => leads.filter((l) => l.status === 'gewonnen' && imBereich(statusZeit(l), range)), [leads, range])
+  const termine = useMemo(() => leads.filter((l) => l.status === 'termin_vereinbart' && imBereich(statusZeit(l), range)), [leads, range])
   const counts = useMemo(() => countByStatus(leads), [leads])
+
+  const kein = bereichHinweis !== null // ungueltiger Bereich: keine Zahlen statt stillem "Alle"
 
   const wiedervorlagen = useMemo(() => wiedervorlagenFuer(leads, profile?.id ?? null), [leads, profile?.id])
   const ueberfaellige = wiedervorlagen.filter((w) => w.ueberfaellig)
@@ -74,6 +80,11 @@ export default function Dashboard() {
             />
           </div>
         </div>
+        {bereichHinweis && (
+          <p className="mt-2 text-sm text-amber-700" role="status">
+            {bereichHinweis}
+          </p>
+        )}
       </Card>
 
       {loading && leads.length === 0 ? (
@@ -83,10 +94,10 @@ export default function Dashboard() {
       ) : (
         <>
           <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
-            <KpiTile label="Neue Leads" value={String(neueLeads.length)} hint={`Eingang: ${ZEITRAUM_LABELS[filter]}`} />
-            <KpiTile label="Gewonnene Kunden" value={String(gewonnen.length)} accent="green" hint={`Gewonnen: ${ZEITRAUM_LABELS[filter]}`} />
-            <KpiTile label="Termine vereinbart" value={String(termine.length)} accent="amber" hint={`Status gesetzt: ${ZEITRAUM_LABELS[filter]}`} />
-            <KpiTile label="Tarifbeitrag-Volumen" value={formatEuroExact(beitragSumme(neueLeads))} accent="brand" hint="monatlich, neue Leads im Zeitraum" />
+            <KpiTile label="Neue Leads" value={kein ? '–' : String(neueLeads.length)} hint={`Eingang: ${ZEITRAUM_LABELS[filter]}`} />
+            <KpiTile label="Gewonnene Kunden" value={kein ? '–' : String(gewonnen.length)} accent="green" hint={`Gewonnen: ${ZEITRAUM_LABELS[filter]}`} />
+            <KpiTile label="Termine vereinbart" value={kein ? '–' : String(termine.length)} accent="amber" hint={`Status gesetzt: ${ZEITRAUM_LABELS[filter]}`} />
+            <KpiTile label="Tarifbeitrag-Volumen" value={kein ? '–' : formatEuroExact(beitragSumme(neueLeads))} accent="brand" hint="monatlich, neue Leads im Zeitraum" />
           </div>
 
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
