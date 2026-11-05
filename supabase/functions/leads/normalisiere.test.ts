@@ -66,7 +66,8 @@ test('Hilfsfunktionen', () => {
   assert.equal(normalisiereTelefon('p:+49 151 1234567'), '+49 151 1234567')
   assert.equal(normalisiereTelefon('4915112345678'), '+4915112345678')
   assert.equal(normalisiereZeit('2026-11-05T10:15:30+0100'), '2026-11-05T10:15:30+01:00')
-  assert.equal(normalisiereZeit('2026-11-05 10:15:30'), '2026-11-05T10:15:30Z')
+  assert.equal(normalisiereZeit('2026-11-05 10:15:30'), '2026-11-05T09:15:30.000Z') // deutsche Ortszeit (Winter: UTC+1)
+  assert.equal(normalisiereZeit('2026-07-05 10:15:30'), '2026-07-05T08:15:30.000Z') // Sommerzeit: UTC+2
   assert.equal(normalisiereBetrag('512,40 €'), '512.40')
   assert.equal(normalisiereBetrag('1.512,40'), '1512.40')
 })
@@ -74,4 +75,36 @@ test('Hilfsfunktionen', () => {
 test('Nicht-Objekte bleiben unveraendert und werden abgelehnt', async () => {
   assert.deepEqual(await normalisiereEingang([1, 2], standard, jetzt), [1, 2])
   assert.equal(validateLead(await normalisiereEingang('text', standard, jetzt), jetzt).ok, false)
+})
+
+test('Lead-Boersen-Format (Tim): verschachtelt, Telefon privat, Boersenstart in Ortszeit, Sonderfelder', async () => {
+  const body = {
+    leadId: '4778250',
+    partnerId: '42121',
+    leadDetails: {
+      'Lead ID': '4778250',
+      Versicherungsart: 'KVV-Opt',
+      'Name / Nachname': 'Beispiel',
+      Vorname: 'Max',
+      'Telefon privat': '491721242134',
+      'Telefon mobil': '',
+      Email: 'muster@web.de',
+      'Börsenstart': '2026-11-05 14:36:00',
+      Buchungsdatum: '2026-11-05 14:36:00',
+      'Sonderfeld 11': 'AXA',
+      'Sonderfeld 20': '780',
+    },
+  }
+  const jetztNachSendung = new Date('2026-11-05T13:37:00Z')
+  const r = validateLead(await normalisiereEingang(body, standard, jetztNachSendung), jetztNachSendung)
+  assert.equal(r.ok, true, JSON.stringify(r))
+  if (r.ok) {
+    assert.equal(r.value.externeId, '4778250')
+    assert.equal(r.value.name, 'Max Beispiel')
+    assert.equal(r.value.telefon, '+491721242134')
+    assert.equal(r.value.gesellschaft, 'AXA')
+    assert.equal(r.value.tarifbeitrag, 780)
+    assert.equal(r.value.eingangZeit, '2026-11-05T13:36:00.000Z')
+    assert.equal(r.value.einwilligungZeit, r.value.eingangZeit)
+  }
 })

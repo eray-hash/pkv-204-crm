@@ -17,12 +17,12 @@ const ALIASE: Record<string, string[]> = {
   lead_id: ['lead_id', 'leadid', 'leadgen_id', 'id', 'external_id', 'externe_id'],
   name: ['name', 'full_name', 'fullname', 'vollstaendiger_name', 'vollständiger_name', 'contact_name'],
   vorname: ['first_name', 'firstname', 'vorname'],
-  nachname: ['last_name', 'lastname', 'surname', 'nachname'],
-  telefon: ['telefon', 'phone', 'phone_number', 'handynummer', 'handy', 'mobile', 'mobil', 'mobile_number', 'telefonnummer', 'tel'],
+  nachname: ['last_name', 'lastname', 'surname', 'nachname', 'name_nachname'],
+  telefon: ['telefon', 'telefon_mobil', 'telefon_privat', 'phone', 'phone_number', 'handynummer', 'handy', 'mobile', 'mobil', 'mobile_number', 'telefonnummer', 'tel'],
   email: ['email', 'e_mail', 'email_address', 'e_mail_adresse'],
-  gesellschaft: ['gesellschaft', 'versicherung', 'versicherer', 'aktuelle_versicherung', 'krankenversicherung'],
-  tarifbeitrag: ['tarifbeitrag', 'beitrag', 'monatsbeitrag', 'aktueller_beitrag', 'monatlicher_beitrag'],
-  eingang_zeit: ['eingang_zeit', 'created_time', 'created_at', 'createdtime', 'timestamp', 'submitted_at', 'zeitpunkt'],
+  gesellschaft: ['gesellschaft', 'sonderfeld_11', 'versicherung', 'versicherer', 'aktuelle_versicherung', 'krankenversicherung'],
+  tarifbeitrag: ['tarifbeitrag', 'sonderfeld_20', 'beitrag', 'monatsbeitrag', 'aktueller_beitrag', 'monatlicher_beitrag'],
+  eingang_zeit: ['eingang_zeit', 'börsenstart', 'boersenstart', 'buchungsdatum', 'created_time', 'created_at', 'createdtime', 'timestamp', 'submitted_at', 'zeitpunkt'],
   einwilligung_zeit: ['einwilligung_zeit', 'consent_time', 'consent_at'],
   einwilligung_text: ['einwilligung_text', 'consent_text'],
   einwilligung_quelle: ['einwilligung_quelle', 'consent_source'],
@@ -76,6 +76,25 @@ export function normalisiereTelefon(v: unknown): unknown {
   return t
 }
 
+/** Versatz von Europe/Berlin zu UTC in Millisekunden zu einem UTC-Zeitpunkt (beruecksichtigt Sommerzeit). */
+function berlinVersatzMs(utcMs: number): number {
+  const teile = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Berlin', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date(utcMs))
+  const g = (t: string) => Number(teile.find((x) => x.type === t)!.value)
+  return Date.UTC(g('year'), g('month') - 1, g('day'), g('hour'), g('minute'), g('second')) - Math.floor(utcMs / 1000) * 1000
+}
+
+/** "2026-11-05T14:36:00" ohne Zeitzone = deutsche Ortszeit (so schicken es Lead-Boersen) -> ISO mit Zeitzone. */
+function berlinOrtszeitZuIso(t: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?$/.exec(t)
+  if (!m) return t
+  const lokal = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6] ?? 0))
+  if (Number.isNaN(lokal)) return t
+  const utc = lokal - berlinVersatzMs(lokal - berlinVersatzMs(lokal))
+  return new Date(utc).toISOString()
+}
+
 export function normalisiereZeit(v: unknown): unknown {
   if (typeof v === 'number' && Number.isFinite(v)) return new Date(v < 1e11 ? v * 1000 : v).toISOString()
   if (typeof v !== 'string') return v
@@ -83,7 +102,7 @@ export function normalisiereZeit(v: unknown): unknown {
   if (/^\d{9,13}$/.test(t)) return new Date(Number(t) < 1e11 ? Number(t) * 1000 : Number(t)).toISOString()
   t = t.replace(/^(\d{4}-\d{2}-\d{2}) (\d{2}:)/, '$1T$2')
   t = t.replace(/([+-]\d{2})(\d{2})$/, '$1:$2') // Facebook: +0100 -> +01:00
-  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(t)) t += 'Z'
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(t)) return berlinOrtszeitZuIso(t)
   return t
 }
 

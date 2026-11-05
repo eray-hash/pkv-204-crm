@@ -109,7 +109,6 @@ export async function behandleLeadAnfrage(req: Request, deps: LeadDeps): Promise
     return { status: 400, body: { fehler: [{ feld: '(body)', meldung: 'Kein gueltiges JSON' }] } }
   }
 
-  const hatStandard = !!key.standard && Object.values(key.standard).some((w) => w !== null && w !== undefined)
   const normalisiert = await normalisiereEingang(body, key.standard, deps.jetzt())
   const result = validateLead(normalisiert, deps.jetzt())
   if (!result.ok) {
@@ -137,7 +136,7 @@ export async function behandleLeadAnfrage(req: Request, deps: LeadDeps): Promise
       p_einwilligung_ip: v.einwilligungIp,
       p_ist_test: key.ist_test,
       p_text_sha256: await deps.sha256Hex(v.einwilligungText),
-      p_payload_roh: hatStandard ? { ...(bereinigeRohbody(normalisiert) as object), _original: body } : bereinigeRohbody(body),
+      p_payload_roh: bereinigeRohbody(normalisiert),
       p_einwilligung_version: v.einwilligungVersion,
       p_kanal: v.kanal,
       p_begunstigter: v.begunstigter,
