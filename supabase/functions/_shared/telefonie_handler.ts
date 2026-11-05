@@ -9,7 +9,7 @@ import {
   parseVerbindenBody,
   leadVergeben,
   pruefeLeadAnrufbar,
-  pruefeRateLimit,
+  pruefeUebernehmbar,
   pruefeZuweisung,
   verschluessele,
   type FetchLike,
@@ -167,24 +167,66 @@ export async function behandleVerbinden(userId: string, rawBody: unknown, deps: 
 
 // ---------- anrufen ----------
 
+/** Ergebnis von public.lead_uebernehmen_fuer (Datenbankfunktion; einzige Stelle der Uebernahme-Logik). */
+export type UebernahmeErgebnis = 'ok' | 'eigen' | 'vergeben' | 'limit' | 'nicht_uebernehmbar' | 'nicht_gefunden' | 'nicht_angemeldet'
+
+/** Ergebnis von public.anruf_reservieren: Eintrag angelegt (id) oder Limit erreicht (grund). */
+export type Reservierung = { id: string } | { grund: string }
+
 export interface AnrufenDeps {
   schluessel: () => Promise<CryptoKey>
   fetch: FetchLike
   jetzt: () => Date
   ladeLead: (leadId: string) => Promise<LeadFuerAnruf | null>
-  /**
-   * Uebernimmt einen freien Lead atomar fuer den Nutzer (update ... where zugewiesen_an is null or = user returning id).
-   * Gibt false zurueck, wenn der Lead inzwischen jemand anderem gehoert.
-   */
-  uebernehmeLead: (leadId: string, userId: string) => Promise<boolean>
-  hatEinwilligung: (leadId: string) => Promise<boolean>
+  /** Zeitpunkt der Einwilligung (consent_records.einwilligung_zeit) oder null, wenn es keinen Nachweis gibt */
+  einwilligungZeit: (leadId: string) => Promise<string | null>
+  /** Zentrale Datenbankpruefung public.darf_angerufen_werden (letzte Instanz; dieselbe Logik wie View und Policies) */
+  darfAngerufenWerden: (leadId: string) => Promise<boolean>
+  /** Uebernimmt einen freien Lead atomar fuer den Nutzer (public.lead_uebernehmen_fuer, inkl. Obergrenze offener Leads). */
+  uebernehmeLead: (leadId: string, userId: string) => Promise<UebernahmeErgebnis | string>
   ladeZugang: (userId: string) => Promise<ZugangRow | null>
-  letzterAnruf: (userId: string) => Promise<string | null>
-  speichereAnruf: (row: { lead_id: string; user_id: string; kanal: 'mobil'; anbieter: string; provider_call_id: string | null }) => Promise<void>
+  /** Prueft die Limits (pro Lead 1 Anruf je 10 Min., pro Nutzer 30 je Stunde, 3 s Abstand) und legt den Eintrag atomar an. */
+  reserviereAnruf: (row: { lead_id: string; user_id: string; kanal: 'mobil'; anbieter: string }) => Promise<Reservierung>
+  /** Tragt die Anruf-ID des Anbieters nach. */
+  bestaetigeAnruf: (id: string, providerCallId: string | null) => Promise<void>
+  /** Entfernt eine reservierte Zeile, wenn der Anruf nicht zustande kam. */
+  verwerfeAnruf: (id: string) => Promise<void>
 }
 
-// Schutz gegen Doppelklick/parallele Anfragen desselben Nutzers innerhalb einer Instanz
+// Schutz gegen Doppelklick/parallele Anfragen desselben Nutzers innerhalb einer Instanz (zusaetzlich zu den DB-Limits)
 const laufend = new Set<string>()
+
+function limitFehler(grund: string): TelefonieFehler {
+  if (grund === 'lead_limit') {
+    return new TelefonieFehler('zu_viele_anfragen', 'Dieser Lead wurde gerade erst angerufen. Bitte mindestens 10 Minuten bis zum nächsten Anruf warten.', 429)
+  }
+  if (grund === 'nutzer_limit') {
+    return new TelefonieFehler('zu_viele_anfragen', 'Das Limit von 30 Anrufen pro Stunde ist erreicht. Bitte später weitertelefonieren.', 429)
+  }
+  return new TelefonieFehler('zu_viele_anfragen', 'Bitte einen Moment warten, bevor der nächste Anruf gestartet wird.', 429)
+}
+
+function uebernahmeFehler(ergebnis: string): TelefonieFehler | null {
+  switch (ergebnis) {
+    case 'ok':
+    case 'eigen':
+      return null
+    case 'vergeben':
+      return leadVergeben()
+    case 'limit':
+      return new TelefonieFehler(
+        'lead_limit',
+        'Sie haben bereits die maximale Zahl offener eigener Leads. Bitte zuerst Leads abarbeiten oder freigeben.',
+        409,
+      )
+    case 'nicht_uebernehmbar':
+      return new TelefonieFehler('lead_gesperrt', 'Dieser Lead kann nicht übernommen werden.', 403)
+    case 'nicht_gefunden':
+      return new TelefonieFehler('lead_nicht_gefunden', 'Dieser Lead wurde nicht gefunden.', 404)
+    default:
+      return new TelefonieFehler('intern', 'Unerwarteter Fehler. Bitte später erneut versuchen.', 500)
+  }
+}
 
 export async function behandleAnrufen(userId: string, rawBody: unknown, deps: AnrufenDeps): Promise<HandlerAntwort> {
   if (laufend.has(userId)) {
@@ -196,11 +238,19 @@ export async function behandleAnrufen(userId: string, rawBody: unknown, deps: An
     if (!parsed.ok) return fehlerAntwort(new TelefonieFehler('ungueltige_eingabe', parsed.meldung, 400))
     const { leadId } = parsed.value
 
-    pruefeRateLimit(await deps.letzterAnruf(userId), deps.jetzt())
-
     // Die Rufnummer kommt ausschliesslich aus der Datenbank, nie vom Client.
     const lead = await deps.ladeLead(leadId)
-    const callee = pruefeLeadAnrufbar(lead, lead ? await deps.hatEinwilligung(lead.id) : false)
+    const callee = pruefeLeadAnrufbar(lead, lead ? await deps.einwilligungZeit(lead.id) : null, deps.jetzt())
+    if (!lead) throw new TelefonieFehler('lead_nicht_gefunden', 'Dieser Lead wurde nicht gefunden.', 404)
+
+    // Nur freie oder eigene Leads; ein freier Lead nur in uebernehmbaren Status (sonst weist der Geschaeftsfuehrer zu).
+    const mussUebernehmen = pruefeZuweisung(lead, userId)
+    if (mussUebernehmen) pruefeUebernehmbar(lead)
+
+    // Zentrale Datenbankpruefung als letzte Instanz (gleiche Logik wie die Ansicht anrufbare_leads)
+    if (!(await deps.darfAngerufenWerden(lead.id))) {
+      throw new TelefonieFehler('lead_gesperrt', 'Dieser Lead darf aktuell nicht angerufen werden.', 403)
+    }
 
     const row = await deps.ladeZugang(userId)
     if (!row || !row.geraet_id) {
@@ -208,27 +258,41 @@ export async function behandleAnrufen(userId: string, rawBody: unknown, deps: An
     }
     const z = await zugangsdaten(row, deps)
 
-    // Nur freie oder eigene Leads. Ein freier Lead wird VOR dem Anruf atomar uebernommen; scheitert danach der Anruf,
-    // bleibt er dem Nutzer zugewiesen (er kann ihn im CRM freigeben).
-    if (lead && pruefeZuweisung(lead, userId)) {
-      const uebernommen = await deps.uebernehmeLead(leadId, userId)
-      if (!uebernommen) throw leadVergeben()
-    }
+    // 1. Anruf atomar RESERVIEREN (Limits + Protokollzeile), bevor irgendetwas bei sipgate ausgeloest wird.
+    const reservierung = await deps.reserviereAnruf({ lead_id: lead.id, user_id: userId, kanal: 'mobil', anbieter: row.anbieter })
+    if ('grund' in reservierung) throw limitFehler(reservierung.grund)
+    const reservierungId = reservierung.id
 
-    const { anrufId } = await adapterFuer(row.anbieter).anrufen(
-      z,
-      { geraetId: row.geraet_id, rufnummerCaller: row.rufnummer_caller, rufnummerAnzeige: row.rufnummer_anzeige, callee },
-      deps.fetch,
-    )
-
-    // Der Anruf ist ausgeloest; ein Fehler beim Protokollieren darf das Ergebnis nicht kippen.
-    let protokolliert = true
     try {
-      await deps.speichereAnruf({ lead_id: leadId, user_id: userId, kanal: 'mobil', anbieter: row.anbieter, provider_call_id: anrufId })
-    } catch {
-      protokolliert = false
+      // 2. Freien Lead atomar uebernehmen (inkl. Obergrenze); scheitert das, wird die Reservierung zurueckgenommen
+      if (mussUebernehmen) {
+        const fehler = uebernahmeFehler(await deps.uebernehmeLead(lead.id, userId))
+        if (fehler) throw fehler
+      }
+      // 3. Erst jetzt bei sipgate anrufen
+      const { anrufId } = await adapterFuer(row.anbieter).anrufen(
+        z,
+        { geraetId: row.geraet_id, rufnummerCaller: row.rufnummer_caller, rufnummerAnzeige: row.rufnummer_anzeige, callee },
+        deps.fetch,
+      )
+      // 4. Anruf-ID nachtragen; ein Fehler hier darf das Ergebnis nicht kippen (der Anruf laeuft)
+      let protokolliert = true
+      try {
+        await deps.bestaetigeAnruf(reservierungId, anrufId)
+      } catch {
+        protokolliert = false
+      }
+      return { status: 200, body: { ok: true, protokolliert } }
+    } catch (e) {
+      // Der Anruf kam nicht zustande: die reservierte Zeile wird GELOESCHT (siehe README: das Protokoll zeigt nur wirklich
+      // ausgeloeste Anrufe, und gescheiterte Versuche verbrauchen kein Limit).
+      try {
+        await deps.verwerfeAnruf(reservierungId)
+      } catch {
+        // schlimmstenfalls bleibt eine Zeile ohne Anbieter-ID stehen; der Originalfehler hat Vorrang
+      }
+      throw e
     }
-    return { status: 200, body: { ok: true, protokolliert } }
   } catch (e) {
     return ausFehler(e)
   } finally {

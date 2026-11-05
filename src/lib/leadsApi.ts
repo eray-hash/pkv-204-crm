@@ -1,17 +1,33 @@
 // Zugriff auf die Supabase-Tabellen fuer Leads. Alle Funktionen werfen bei Fehlern keinen Fehler,
 // sondern liefern { error } mit einer deutschen Meldung (Details nur in der Konsole).
 import { supabase } from './supabase'
-import { mapLeadRow, mapLeadRows, sortNewestFirst, verteilungsFehler, type AnrufKanal, type DbLead, type LeadPatch } from './leads'
+import { anrufProtokollFehler, mapLeadRow, mapLeadRows, sortNewestFirst, verteilungsFehler, type AnrufKanal, type DbLead, type LeadPatch } from './leads'
 import { istFehlendeSpalte } from './profilesApi'
 
 const SEITE = 1000
 const MAX_SEITEN = 30
 
-// Basis-Spalten (immer vorhanden) und die mit der Verteilungs-Migration hinzugekommenen Spalten.
+// Basis-Spalten (immer vorhanden) und Spalten, die erst mit spaeteren Migrationen entstehen. Fehlt eine Migration noch
+// (Postgres-Fehler 42703), wird automatisch mit der naechst kleineren Spaltenliste weitergearbeitet.
 const LEAD_SPALTEN =
   'id, name, telefon, email, gesellschaft, tarifbeitrag, quelle, eingang_zeit, status, ist_live, ist_test, moegliches_duplikat_von, zugewiesen_an, naechster_anruf_ab, created_at, updated_at'
-const LEAD_SPALTEN_ERWEITERT = `${LEAD_SPALTEN}, zugewiesen_von, uebernommen_am`
-let leadsErweitertVerfuegbar = true
+const SPALTEN_STUFEN = [
+  `${LEAD_SPALTEN}, zugewiesen_von, uebernommen_am, gesperrt_am, sperrgrund`, // + 20261103000000_qa_haertung.sql
+  `${LEAD_SPALTEN}, zugewiesen_von, uebernommen_am`, // + 20261030000000_verteilung.sql
+  LEAD_SPALTEN,
+]
+let spaltenStufe = 0
+const leadSpalten = () => SPALTEN_STUFEN[spaltenStufe]
+
+/** Fuehrt eine Abfrage mit der aktuellen Spaltenliste aus und faellt bei fehlenden Spalten auf kleinere Listen zurueck. */
+async function mitSpaltenFallback<T extends { error: { code?: string | null; message?: string | null } | null }>(abfrage: (spalten: string) => PromiseLike<T>): Promise<T> {
+  let res = await abfrage(leadSpalten())
+  while (res.error && istFehlendeSpalte(res.error) && spaltenStufe < SPALTEN_STUFEN.length - 1) {
+    spaltenStufe++
+    res = await abfrage(leadSpalten())
+  }
+  return res
+}
 
 export interface Ergebnis<T> {
   data: T | null
@@ -28,14 +44,9 @@ export async function fetchLeads(): Promise<Ergebnis<DbLead[]>> {
   const alle: DbLead[] = []
   for (let seite = 0; seite < MAX_SEITEN; seite++) {
     const von = seite * SEITE
-    const abfrage = (spalten: string) =>
-      supabase.from('leads').select(spalten).eq('ist_test', false).order('eingang_zeit', { ascending: false }).range(von, von + SEITE - 1)
-    let { data, error } = await abfrage(leadsErweitertVerfuegbar ? LEAD_SPALTEN_ERWEITERT : LEAD_SPALTEN)
-    if (error && leadsErweitertVerfuegbar && istFehlendeSpalte(error)) {
-      // Migration noch nicht eingespielt: ohne die neuen Spalten weiterarbeiten
-      leadsErweitertVerfuegbar = false
-      ;({ data, error } = await abfrage(LEAD_SPALTEN))
-    }
+    const { data, error } = await mitSpaltenFallback((spalten) =>
+      supabase.from('leads').select(spalten).eq('ist_test', false).order('eingang_zeit', { ascending: false }).range(von, von + SEITE - 1),
+    )
     if (error) return fehler('Die Leads konnten nicht geladen werden.', error)
     alle.push(...mapLeadRows(data))
     if (!data || data.length < SEITE) break
@@ -61,25 +72,19 @@ export async function fetchQueue(): Promise<Ergebnis<DbLead[]>> {
 }
 
 export async function fetchLead(id: string): Promise<Ergebnis<DbLead | null>> {
-  const abfrage = (spalten: string) => supabase.from('leads').select(spalten).eq('id', id).maybeSingle()
-  let { data, error } = await abfrage(leadsErweitertVerfuegbar ? LEAD_SPALTEN_ERWEITERT : LEAD_SPALTEN)
-  if (error && leadsErweitertVerfuegbar && istFehlendeSpalte(error)) {
-    leadsErweitertVerfuegbar = false
-    ;({ data, error } = await abfrage(LEAD_SPALTEN))
-  }
+  const { data, error } = await mitSpaltenFallback((spalten) => supabase.from('leads').select(spalten).eq('id', id).maybeSingle())
   if (error) return fehler('Der Lead konnte nicht geladen werden.', error)
   const lead = mapLeadRow(data)
   return { data: lead && !lead.ist_test ? lead : null, error: null }
 }
 
 export async function updateLeadRow(id: string, patch: LeadPatch): Promise<Ergebnis<DbLead>> {
-  const { data, error } = await supabase
-    .from('leads')
-    .update(patch)
-    .eq('id', id)
-    .select(leadsErweitertVerfuegbar ? LEAD_SPALTEN_ERWEITERT : LEAD_SPALTEN)
-    .maybeSingle()
-  if (error) return fehler('Die Änderung konnte nicht gespeichert werden.', error)
+  const { data, error } = await mitSpaltenFallback((spalten) => supabase.from('leads').update(patch).eq('id', id).select(spalten).maybeSingle())
+  if (error) {
+    // 42501 = Statuswaechter: ein abgeschlossener oder gesperrter Lead darf nur vom Geschaeftsfuehrer geaendert werden
+    if (error.code === '42501') return fehler('Dieser Lead ist abgeschlossen oder gesperrt. Nur der Geschäftsführer darf den Status ändern.', error)
+    return fehler('Die Änderung konnte nicht gespeichert werden.', error)
+  }
   const lead = mapLeadRow(data)
   if (!lead) {
     return fehler('Keine Berechtigung: Der Lead gehört jemand anderem oder ist noch frei (bitte zuerst übernehmen).', 'leer')
@@ -120,11 +125,20 @@ export interface Einwilligung {
 
 /** Einwilligungsnachweis (ohne IP-Adresse, die wird im CRM nicht angezeigt). */
 export async function fetchEinwilligung(leadId: string): Promise<Ergebnis<Einwilligung | null>> {
-  const { data, error } = await supabase
-    .from('consent_records')
-    .select('einwilligung_zeit, einwilligung_text, einwilligung_quelle')
-    .eq('lead_id', leadId)
-    .maybeSingle()
+  // Seit 20261103000000_qa_haertung.sql ist consent_records nur noch fuer den Geschaeftsfuehrer lesbar; alle anderen bekommen
+  // den Nachweis (ohne IP) fuer Leads, die sie sehen duerfen, ueber die Funktion lead_einwilligung.
+  let { data, error } = (await supabase.rpc('lead_einwilligung', { p_lead_id: leadId }).maybeSingle()) as {
+    data: Record<string, unknown> | null
+    error: { code?: string | null; message?: string | null } | null
+  }
+  if (error && (error.code === 'PGRST202' || error.code === '42883')) {
+    // Funktion noch nicht eingespielt: bisheriger direkter Zugriff
+    ;({ data, error } = (await supabase
+      .from('consent_records')
+      .select('einwilligung_zeit, einwilligung_text, einwilligung_quelle')
+      .eq('lead_id', leadId)
+      .maybeSingle()) as { data: Record<string, unknown> | null; error: { code?: string | null; message?: string | null } | null })
+  }
   if (error) return fehler('Der Einwilligungsnachweis konnte nicht geladen werden.', error)
   if (!data) return { data: null, error: null }
   return {
@@ -205,8 +219,8 @@ export async function fetchAnrufe(leadId: string): Promise<Ergebnis<Anruf[]>> {
 export async function logAnruf(leadId: string, userId: string, kanal: AnrufKanal): Promise<string | null> {
   const { error } = await supabase.from('anrufe').insert({ lead_id: leadId, user_id: userId, kanal })
   if (error) {
-    console.error('Anruf protokollieren fehlgeschlagen', error)
-    return 'Der Anruf konnte nicht protokolliert werden.'
+    console.error('Anruf protokollieren fehlgeschlagen', error.code)
+    return anrufProtokollFehler(error)
   }
   return null
 }

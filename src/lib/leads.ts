@@ -62,6 +62,9 @@ export interface DbLead {
   zugewiesen_von: string | null
   uebernommen_am: string | null
   naechster_anruf_ab: string | null
+  /** Zeitpunkt einer Sperre/eines Widerrufs; gesperrte Leads werden nie angerufen */
+  gesperrt_am: string | null
+  sperrgrund: string | null
   created_at: string
   updated_at: string
 }
@@ -156,6 +159,8 @@ export function mapLeadRow(row: unknown): DbLead | null {
     zugewiesen_von: strOrNull(r.zugewiesen_von),
     uebernommen_am: strOrNull(r.uebernommen_am),
     naechster_anruf_ab: strOrNull(r.naechster_anruf_ab),
+    gesperrt_am: strOrNull(r.gesperrt_am),
+    sperrgrund: strOrNull(r.sperrgrund),
     created_at: str(r.created_at),
     updated_at: str(r.updated_at),
   }
@@ -302,8 +307,30 @@ export function verteilungsFehler(err: { code?: string | null; message?: string 
   if (code === 'PGRST202' || code === '42883' || msg.includes('could not find the function')) {
     return 'Die Lead-Verteilung ist serverseitig noch nicht eingerichtet.'
   }
-  if (code === '42501' || msg.includes('geschaeftsfuehrer')) return 'Nur der Geschäftsführer darf Leads zuweisen.'
+  if (code === '53400' || msg.includes('obergrenze')) {
+    return 'Sie haben bereits die maximale Zahl offener eigener Leads (50). Bitte zuerst Leads abarbeiten oder freigeben.'
+  }
+  if (code === '42501' || msg.includes('geschaeftsfuehrer')) return 'Nur der Geschäftsführer darf diese Aktion ausführen.'
   return 'Die Aktion konnte nicht ausgeführt werden. Bitte später erneut versuchen.'
+}
+
+/**
+ * Deutsche Meldung, wenn der Browser einen Anruf nicht protokollieren darf (tel:-Pfad). Die Datenbank lehnt ab, wenn die Limits
+ * erreicht sind (Fehler 53400, Meldung "anruf_limit:<grund>") oder der Lead nicht (mehr) angerufen werden darf (RLS, 42501).
+ * Der Anruf wird dann NICHT gestartet.
+ */
+export function anrufProtokollFehler(err: { code?: string | null; message?: string | null } | null | undefined): string {
+  const code = err?.code ?? ''
+  const msg = (err?.message ?? '').toLowerCase()
+  if (code === '53400' || msg.includes('anruf_limit')) {
+    if (msg.includes('lead_limit')) return 'Dieser Lead wurde gerade erst angerufen. Bitte mindestens 10 Minuten bis zum nächsten Anruf warten.'
+    if (msg.includes('nutzer_limit')) return 'Das Limit von 30 Anrufen pro Stunde ist erreicht. Bitte später weitertelefonieren.'
+    return 'Bitte einen Moment warten, bevor der nächste Anruf gestartet wird.'
+  }
+  if (code === '42501' || msg.includes('row-level security')) {
+    return 'Dieser Anruf ist nicht erlaubt: Der Lead gehört Ihnen nicht, ist gesperrt, abgeschlossen oder hat keine gültige Einwilligung.'
+  }
+  return 'Der Anruf konnte nicht protokolliert werden und wird deshalb nicht gestartet. Bitte erneut versuchen.'
 }
 
 export interface Wiedervorlage {

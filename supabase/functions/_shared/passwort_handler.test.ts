@@ -1,34 +1,43 @@
 // Tests ohne Netzwerk: gefakte Auth-/Datenbank-Zugriffe.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { behandlePasswortSetzen, MIN_ABSTAND_MS, type AuthAktualisierung, type PasswortDeps } from './passwort_handler.ts'
+import { behandlePasswortSetzen, MIN_ABSTAND_MS, type AuthAktualisierung, type PasswortDeps, type ProtokollEintrag } from './passwort_handler.ts'
 
 const GF = '11111111-1111-4111-8111-111111111111'
 const MA = '22222222-2222-4222-8222-222222222222'
 const UNBEKANNT = '33333333-3333-4333-8333-333333333333'
 const PW = 'Sehr-Geheim-Passwort-42'
 
-function aufbau(opts: { rollen?: Record<string, string>; vorhanden?: string[]; updateFehler?: boolean; logFehler?: boolean; start?: number; festeZeit?: boolean } = {}) {
+function aufbau(opts: { rollen?: Record<string, string>; vorhanden?: string[]; updateFehler?: boolean; logFehler?: boolean; start?: number; festeZeit?: boolean; sitzungenFehler?: boolean } = {}) {
   const rollen = opts.rollen ?? { [GF]: 'geschaeftsfuehrer', [MA]: 'mitarbeiter' }
   const vorhanden = new Set(opts.vorhanden ?? [GF, MA])
   const state = {
     zeit: opts.start ?? Date.parse('2026-11-02T10:00:00Z'),
     updates: [] as { id: string; attribute: AuthAktualisierung }[],
-    logs: [] as { gesetzt_von: string; fuer_nutzer: string }[],
+    logs: [] as ProtokollEintrag[],
+    sitzungen: [] as string[],
+    ereignisse: [] as string[],
     letzte: new Map<string, number>(),
   }
   const deps: PasswortDeps = {
     // Standard: jeder Aufruf geschieht 10 s nach dem vorigen (Rate-Limit stoert nicht); festeZeit steuert die Zeit selbst
     jetzt: () => new Date(opts.festeZeit ? state.zeit : (state.zeit += 10_000)),
     ladeRolle: async (id) => rollen[id] ?? null,
-    nutzerExistiert: async (id) => vorhanden.has(id),
+    ladeNutzerInfo: async (id) => (vorhanden.has(id) ? { name: `Name ${id.slice(0, 2)}`, email: `${id.slice(0, 2)}@x.test` } : null),
     aktualisiereNutzer: async (id, attribute) => {
+      state.ereignisse.push('setzen')
       if (opts.updateFehler) throw new Error(`GoTrue sagt: Passwort ${attribute.password} abgelehnt`)
       state.updates.push({ id, attribute })
     },
     protokolliere: async (e) => {
+      state.ereignisse.push('protokoll')
       if (opts.logFehler) throw new Error('tabelle fehlt')
       state.logs.push(e)
+    },
+    beendeSitzungen: async (id) => {
+      state.ereignisse.push('sitzungen')
+      if (opts.sitzungenFehler) throw new Error('rpc fehlt')
+      state.sitzungen.push(id)
     },
     letzterAufruf: (id) => state.letzte.get(id) ?? null,
     merkeAufruf: (id, z) => void state.letzte.set(id, z),
@@ -103,11 +112,16 @@ test('Unbekannter Nutzer: 404', async () => {
 test('Erfolg: updateUserById-Parameter wie vereinbart, Antwort nur { ok: true }, Protokoll ohne Passwort', async () => {
   const { deps, state } = aufbau()
   const r = await behandlePasswortSetzen(GF, { user_id: MA, passwort: PW }, deps)
-  assert.deepEqual(r, { status: 200, body: { ok: true } })
+  assert.deepEqual(r, { status: 200, body: { ok: true, sitzungenBeendet: true } })
   assert.deepEqual(state.updates, [
     { id: MA, attribute: { password: PW, email_confirm: true, user_metadata: { passwort_wechseln: true } } },
   ])
-  assert.deepEqual(state.logs, [{ gesetzt_von: GF, fuer_nutzer: MA }])
+  assert.equal(state.logs.length, 1)
+  assert.deepEqual(
+    { von: state.logs[0].gesetzt_von, fuer: state.logs[0].fuer_nutzer, vn: state.logs[0].gesetzt_von_name, fe: state.logs[0].fuer_nutzer_email },
+    { von: GF, fuer: MA, vn: 'Name 11', fe: '22@x.test' },
+  )
+  assert.deepEqual(state.sitzungen, [MA])
   assert.ok(!JSON.stringify(state.logs).includes(PW))
 })
 
@@ -129,9 +143,26 @@ test('Fehler beim Setzen: 500 mit festem Text, Passwort nirgends in der Antwort 
   assert.ok(!ausgabe.includes(PW))
 })
 
-test('Fehler beim Protokollieren verhindert den Erfolg nicht', async () => {
-  const { deps } = aufbau({ logFehler: true })
-  assert.equal((await behandlePasswortSetzen(GF, { user_id: MA, passwort: PW }, deps)).status, 200)
+test('Reihenfolge: erst Protokoll, dann Passwort setzen, dann Sitzungen beenden', async () => {
+  const { deps, state } = aufbau()
+  await behandlePasswortSetzen(GF, { user_id: MA, passwort: PW }, deps)
+  assert.deepEqual(state.ereignisse, ['protokoll', 'setzen', 'sitzungen'])
+})
+
+test('Protokoll schlaegt fehl: 500 und das Passwort wird NICHT geaendert', async () => {
+  const { deps, state } = aufbau({ logFehler: true })
+  const r = await behandlePasswortSetzen(GF, { user_id: MA, passwort: PW }, deps)
+  assert.equal(r.status, 500)
+  assert.equal(state.updates.length, 0)
+  assert.deepEqual(state.ereignisse, ['protokoll'])
+  assert.ok(!JSON.stringify(r).includes(PW))
+})
+
+test('Sitzungen beenden schlaegt fehl: Passwort ist gesetzt, Antwort meldet es', async () => {
+  const { deps, state } = aufbau({ sitzungenFehler: true })
+  const r = await behandlePasswortSetzen(GF, { user_id: MA, passwort: PW }, deps)
+  assert.deepEqual(r, { status: 200, body: { ok: true, sitzungenBeendet: false } })
+  assert.equal(state.updates.length, 1)
 })
 
 test('Passwort taucht in keiner Antwort und keiner Konsolenausgabe auf (alle Pfade)', async () => {

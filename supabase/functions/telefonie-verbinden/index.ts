@@ -6,7 +6,7 @@
 //   { aktion: 'trennen' }                                 -> Zugang loeschen
 // Das Token wird nie an den Browser zurueckgegeben.
 import { behandleVerbinden, type ZugangRow } from '../_shared/telefonie_handler.ts'
-import { CORS_HEADERS, antwort, dbFehler, dienstClient, leseJson, nutzerIdAusRequest, schluessel } from '../_shared/server.ts'
+import { CORS_HEADERS, antwort, bodyOderFehler, dbFehler, dienstClient, nutzerOderFehler, schluessel } from '../_shared/server.ts'
 
 const client = dienstClient()
 const SPALTEN = 'user_id, anbieter, token_id, token_verschluesselt, geraet_id, rufnummer_caller, rufnummer_anzeige'
@@ -15,10 +15,13 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS })
   if (req.method !== 'POST') return antwort(405, { ok: false, fehler: 'Nur POST erlaubt' })
 
-  const userId = await nutzerIdAusRequest(req, client)
-  if (!userId) return antwort(401, { ok: false, code: 'nicht_angemeldet', fehler: 'Bitte erneut anmelden.' })
+  const nutzer = await nutzerOderFehler(req, client)
+  if (nutzer instanceof Response) return nutzer
+  const userId = nutzer.userId
 
-  const body = await leseJson(req)
+  const gelesen = await bodyOderFehler(req)
+  if (gelesen instanceof Response) return gelesen
+  const body = gelesen.body
 
   const res = await behandleVerbinden(userId, body, {
     schluessel,

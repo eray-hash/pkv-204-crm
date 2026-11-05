@@ -1,9 +1,10 @@
 // Deno-spezifische Hilfen fuer die Telefonie-Funktionen (nicht unit-getestet, bewusst duenn gehalten).
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { parseSchluessel } from './telefonie.ts'
+import { leseJsonBegrenzt, pruefeNutzerToken } from './http.ts'
 
 // Der Browser ruft die Funktionen direkt auf (supabase.functions.invoke). Der Zugriff wird NICHT ueber die
-// Herkunft, sondern ueber das Nutzer-JWT geschuetzt (siehe nutzerIdAusRequest).
+// Herkunft, sondern ueber das Nutzer-JWT geschuetzt (siehe nutzerOderFehler).
 export const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -26,24 +27,22 @@ export function dienstClient(): SupabaseClient {
   })
 }
 
-/** Prueft das Nutzer-JWT (Authorization: Bearer <access token>) und liefert die Nutzer-ID oder null. */
-export async function nutzerIdAusRequest(req: Request, client: SupabaseClient): Promise<string | null> {
-  const auth = req.headers.get('authorization') ?? ''
-  const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : ''
-  if (!token) return null
-  const { data, error } = await client.auth.getUser(token)
-  if (error || !data.user) return null
-  return data.user.id
+/**
+ * Prueft das Nutzer-JWT (Authorization: Bearer <access token>, Schema unabhaengig von Gross-/Kleinschreibung).
+ * Liefert die Nutzer-ID oder eine fertige Fehlerantwort (401, bei nicht erreichbarem Auth-Dienst 502; jeweils mit CORS-Headern).
+ */
+export async function nutzerOderFehler(req: Request, client: SupabaseClient): Promise<{ userId: string } | Response> {
+  const r = await pruefeNutzerToken(req.headers.get('authorization'), (token) => client.auth.getUser(token))
+  return r.ok ? { userId: r.userId } : antwort(r.status, r.body)
 }
 
-export async function leseJson(req: Request): Promise<unknown> {
-  const text = await req.text()
-  if (new TextEncoder().encode(text).length > MAX_BODY_BYTES) return undefined
-  try {
-    return JSON.parse(text)
-  } catch {
-    return undefined
+/** Liest den JSON-Body mit Groessenlimit (413 schon anhand von Content-Length). Ungueltiges JSON ergibt body = undefined. */
+export async function bodyOderFehler(req: Request): Promise<{ body: unknown } | Response> {
+  const r = await leseJsonBegrenzt(req, MAX_BODY_BYTES)
+  if (!r.ok) {
+    return antwort(r.status, { ok: false, code: r.status === 413 ? 'zu_gross' : 'ungueltige_eingabe', fehler: r.status === 413 ? 'Die Anfrage ist zu groß.' : 'Ungültige Anfrage.' })
   }
+  return { body: r.body }
 }
 
 let schluesselCache: Promise<CryptoKey> | null = null
@@ -58,7 +57,8 @@ export function schluessel(): Promise<CryptoKey> {
   return schluesselCache
 }
 
-export function dbFehler(was: string, error: { message: string }): never {
-  console.error(`${was} fehlgeschlagen:`, error.message)
+/** Loggt nur den Fehlercode, nie die Meldung von Postgres (sie kann Eingabewerte enthalten). */
+export function dbFehler(was: string, error: { code?: string; message?: string }): never {
+  console.error(`${was} fehlgeschlagen:`, error.code ?? 'ohne Code')
   throw new Error(was)
 }

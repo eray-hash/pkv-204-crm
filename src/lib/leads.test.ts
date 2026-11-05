@@ -11,6 +11,7 @@ import {
   imBereich,
   kategorie,
   leadZugriff,
+  anrufProtokollFehler,
   filterZuweisung,
   queueFuerNutzer,
   verteilungsFehler,
@@ -283,4 +284,25 @@ test('verteilungsFehler: deutsche Meldungen', () => {
   assert.match(verteilungsFehler({ code: '42501', message: 'Nur der Geschaeftsfuehrer darf Leads zuweisen.' }), /Geschäftsführer/)
   assert.match(verteilungsFehler({ code: 'XX', message: 'boom' }), /nicht ausgeführt/)
   assert.match(verteilungsFehler(null), /nicht ausgeführt/)
+})
+
+test('Anruf protokollieren: deutsche Meldungen fuer Limits, Ablehnung und technische Fehler', () => {
+  assert.match(anrufProtokollFehler({ code: '53400', message: 'anruf_limit:lead_limit' }), /10 Minuten/)
+  assert.match(anrufProtokollFehler({ code: '53400', message: 'anruf_limit:nutzer_limit' }), /30 Anrufen pro Stunde/)
+  assert.match(anrufProtokollFehler({ code: '53400', message: 'anruf_limit:abstand' }), /einen Moment/)
+  assert.match(anrufProtokollFehler({ code: '42501', message: 'new row violates row-level security policy for table "anrufe"' }), /nicht erlaubt/)
+  assert.match(anrufProtokollFehler({ message: 'Failed to fetch' }), /nicht gestartet/)
+  assert.match(anrufProtokollFehler(null), /nicht gestartet/)
+})
+
+test('Lead uebernehmen: Obergrenze offener Leads wird verstaendlich gemeldet', () => {
+  assert.match(verteilungsFehler({ code: '53400', message: 'Obergrenze fuer offene eigene Leads erreicht' }), /maximale Zahl offener eigener Leads/)
+  assert.match(verteilungsFehler({ code: '42501' }), /Geschäftsführer/)
+})
+
+test('mapLeadRow liest Sperrangaben (gesperrt_am, sperrgrund), fehlende Spalten ergeben null', () => {
+  const l = mapLeadRow({ id: 'x', status: 'neu', gesperrt_am: '2026-11-03T10:00:00Z', sperrgrund: 'Widerruf' })
+  assert.equal(l?.gesperrt_am, '2026-11-03T10:00:00Z')
+  assert.equal(l?.sperrgrund, 'Widerruf')
+  assert.equal(mapLeadRow({ id: 'x', status: 'neu' })?.gesperrt_am, null)
 })

@@ -1,8 +1,13 @@
 // Ausfuehren mit: node --test supabase/functions/_shared/*.test.ts
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import {
+  EINWILLIGUNG_MAX_ALTER_TAGE,
   GESCHLOSSENE_STATUS,
+  OFFENE_STATUS,
+  UEBERNEHMBARE_STATUS,
+  pruefeUebernehmbar,
   TelefonieFehler,
   adapterFuer,
   baueAnrufBody,
@@ -154,31 +159,61 @@ test('parseAnrufenBody: nur eine Lead-ID, Rufnummern vom Client werden ignoriert
 // ---------- Regeln ----------
 
 const lead = (over = {}) => ({ id: 'l1', telefon: '+4915112345678', status: 'neu', ist_test: false, ...over })
+const JETZT = new Date('2026-10-28T10:00:00.000Z')
+const EINWILLIGUNG = '2026-10-20T08:00:00.000Z'
 
 test('Regeln: normaler Lead mit Einwilligung ist anrufbar', () => {
-  assert.equal(pruefeLeadAnrufbar(lead(), true), '+4915112345678')
-  for (const status of ['neu', 'kontaktiert', 'nicht_erreicht', 'termin_vereinbart', 'beratung']) {
-    assert.equal(pruefeLeadAnrufbar(lead({ status }), true), '+4915112345678')
+  assert.equal(pruefeLeadAnrufbar(lead(), EINWILLIGUNG, JETZT), '+4915112345678')
+  for (const status of OFFENE_STATUS) {
+    assert.equal(pruefeLeadAnrufbar(lead({ status }), EINWILLIGUNG, JETZT), '+4915112345678')
   }
 })
 
-test('Regeln: Testlead wird verweigert', async () => {
-  const f = await wirft(() => pruefeLeadAnrufbar(lead({ ist_test: true }), true))
+test('Regeln: Testlead und gesperrter Lead werden verweigert', async () => {
+  const f = await wirft(() => pruefeLeadAnrufbar(lead({ ist_test: true }), EINWILLIGUNG, JETZT))
   assert.equal(f.code, 'lead_gesperrt')
   assert.equal(f.status, 403)
+  const g = await wirft(() => pruefeLeadAnrufbar(lead({ gesperrt_am: '2026-10-27T10:00:00Z' }), EINWILLIGUNG, JETZT))
+  assert.equal(g.code, 'lead_gesperrt')
+  assert.match(g.message, /gesperrt/)
 })
 
 test('Regeln: geschlossene Leads werden verweigert', async () => {
   assert.deepEqual([...GESCHLOSSENE_STATUS].sort(), ['gewonnen', 'kein_interesse', 'nicht_mehr_pkv', 'schon_umgestellt', 'verloren', 'verstorben'])
   for (const status of GESCHLOSSENE_STATUS) {
-    assert.equal((await wirft(() => pruefeLeadAnrufbar(lead({ status }), true))).code, 'lead_gesperrt', status)
+    assert.equal((await wirft(() => pruefeLeadAnrufbar(lead({ status }), EINWILLIGUNG, JETZT))).code, 'lead_gesperrt', status)
   }
 })
 
-test('Regeln: ohne Einwilligungsnachweis, ohne Lead oder mit kaputter Nummer wird verweigert', async () => {
-  assert.equal((await wirft(() => pruefeLeadAnrufbar(lead(), false))).code, 'keine_einwilligung')
-  assert.equal((await wirft(() => pruefeLeadAnrufbar(null, true))).code, 'lead_nicht_gefunden')
-  assert.equal((await wirft(() => pruefeLeadAnrufbar(lead({ telefon: '0151 123' }), true))).code, 'nummer_ungueltig')
+test('Regeln: ohne Einwilligungsnachweis, zu alte Einwilligung, ohne Lead oder mit unzulaessiger Nummer wird verweigert', async () => {
+  assert.equal((await wirft(() => pruefeLeadAnrufbar(lead(), null, JETZT))).code, 'keine_einwilligung')
+  assert.equal((await wirft(() => pruefeLeadAnrufbar(lead(), '2025-10-27T09:59:59Z', JETZT))).code, 'keine_einwilligung')
+  assert.doesNotThrow(() => pruefeLeadAnrufbar(lead(), '2025-10-28T10:00:00Z', JETZT)) // genau 365 Tage
+  assert.equal((await wirft(() => pruefeLeadAnrufbar(lead(), 'kein-datum', JETZT))).code, 'keine_einwilligung')
+  assert.equal((await wirft(() => pruefeLeadAnrufbar(null, EINWILLIGUNG, JETZT))).code, 'lead_nicht_gefunden')
+  for (const telefon of ['0151 123', '+4990012345678', '+436641234567', '015112345678', '+4932123456789', '+4918051234567']) {
+    assert.equal((await wirft(() => pruefeLeadAnrufbar(lead({ telefon }), EINWILLIGUNG, JETZT))).code, 'nummer_ungueltig', telefon)
+  }
+})
+
+test('Regeln: freie Leads in beratung/termin_vereinbart sind nicht per Mitarbeiter uebernehmbar', async () => {
+  assert.deepEqual(UEBERNEHMBARE_STATUS, ['neu', 'kontaktiert', 'nicht_erreicht'])
+  for (const status of UEBERNEHMBARE_STATUS) assert.doesNotThrow(() => pruefeUebernehmbar({ status }))
+  for (const status of ['termin_vereinbart', 'beratung']) {
+    assert.equal((await wirft(() => pruefeUebernehmbar({ status }))).code, 'lead_gesperrt', status)
+  }
+})
+
+test('Statuslisten und Konstanten stimmen mit der Migration 20261103000000 ueberein', () => {
+  const sql = readFileSync(new URL('../../migrations/20261103000000_qa_haertung.sql', import.meta.url), 'utf8')
+  const liste = (name: string) => {
+    const m = new RegExp(`function public\\.${name}\\(\\) returns text\\[\\][\\s\\S]*?array\\[([^\\]]*)\\]`).exec(sql)
+    assert.ok(m, name)
+    return m![1].split(',').map((x) => x.trim().replace(/'/g, ''))
+  }
+  assert.deepEqual(liste('uebernehmbare_status'), UEBERNEHMBARE_STATUS)
+  assert.deepEqual(liste('offene_status'), OFFENE_STATUS)
+  assert.match(sql, new RegExp(`einwilligung_max_alter\\(\\) returns interval[\\s\\S]*?interval '${EINWILLIGUNG_MAX_ALTER_TAGE} days'`))
 })
 
 test('Rate-Limit: hoechstens ein Anruf alle 3 Sekunden', async () => {

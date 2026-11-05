@@ -1,8 +1,9 @@
 // Loest ueber sipgate einen Anruf zu einem Lead aus (Rueckruf: erst klingelt das eigene Geraet, dann wird der Lead verbunden).
 // Eingabe: { lead_id } - nie eine Rufnummer. Die Nummer wird hier aus der Datenbank geladen.
-// Der Lead muss frei sein (wird dann vor dem Anruf atomar uebernommen) oder dem Aufrufer gehoeren.
+// Ablauf (siehe _shared/telefonie_handler.ts): Pruefungen (Einwilligung, Sperre, Status, Rufnummer), Anruf RESERVIEREN
+// (Limits, Protokollzeile), freien Lead atomar uebernehmen, erst dann sipgate; bei Fehlern wird die Reservierung geloescht.
 import { behandleAnrufen, type ZugangRow } from '../_shared/telefonie_handler.ts'
-import { CORS_HEADERS, antwort, dbFehler, dienstClient, leseJson, nutzerIdAusRequest, schluessel } from '../_shared/server.ts'
+import { CORS_HEADERS, antwort, bodyOderFehler, dbFehler, dienstClient, nutzerOderFehler, schluessel } from '../_shared/server.ts'
 
 const client = dienstClient()
 const SPALTEN = 'user_id, anbieter, token_id, token_verschluesselt, geraet_id, rufnummer_caller, rufnummer_anzeige'
@@ -11,55 +12,66 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS })
   if (req.method !== 'POST') return antwort(405, { ok: false, fehler: 'Nur POST erlaubt' })
 
-  const userId = await nutzerIdAusRequest(req, client)
-  if (!userId) return antwort(401, { ok: false, code: 'nicht_angemeldet', fehler: 'Bitte erneut anmelden.' })
+  const nutzer = await nutzerOderFehler(req, client)
+  if (nutzer instanceof Response) return nutzer
+  const userId = nutzer.userId
 
-  const body = await leseJson(req)
+  const gelesen = await bodyOderFehler(req)
+  if (gelesen instanceof Response) return gelesen
 
-  const res = await behandleAnrufen(userId, body, {
+  const res = await behandleAnrufen(userId, gelesen.body, {
     schluessel,
     fetch: (url, init) => fetch(url, init),
     jetzt: () => new Date(),
     async ladeLead(leadId) {
-      const { data, error } = await client.from('leads').select('id, telefon, status, ist_test, zugewiesen_an').eq('id', leadId).maybeSingle()
+      const { data, error } = await client
+        .from('leads')
+        .select('id, telefon, status, ist_test, zugewiesen_an, gesperrt_am')
+        .eq('id', leadId)
+        .maybeSingle()
       if (error) dbFehler('Lead laden', error)
       return data ?? null
     },
-    // Atomar: nur wenn der Lead frei ist oder schon dem Nutzer gehoert (userId stammt aus dem geprueften JWT, ist also eine UUID)
-    async uebernehmeLead(leadId, userId) {
-      const { data, error } = await client
-        .from('leads')
-        .update({ zugewiesen_an: userId, zugewiesen_von: userId, uebernommen_am: new Date().toISOString() })
-        .eq('id', leadId)
-        .or(`zugewiesen_an.is.null,zugewiesen_an.eq.${userId}`)
-        .select('id')
-      if (error) dbFehler('Lead übernehmen', error)
-      return (data?.length ?? 0) > 0
-    },
-    async hatEinwilligung(leadId) {
-      const { data, error } = await client.from('consent_records').select('id').eq('lead_id', leadId).maybeSingle()
+    async einwilligungZeit(leadId) {
+      const { data, error } = await client.from('consent_records').select('einwilligung_zeit').eq('lead_id', leadId).maybeSingle()
       if (error) dbFehler('Einwilligung prüfen', error)
-      return Boolean(data)
+      return (data?.einwilligung_zeit as string | undefined) ?? null
+    },
+    async darfAngerufenWerden(leadId) {
+      const { data, error } = await client.rpc('darf_angerufen_werden', { p_lead_id: leadId })
+      if (error) dbFehler('Anrufprüfung', error)
+      return data === true
+    },
+    // Dieselbe Datenbankfunktion wie "Uebernehmen" im Browser (atomar, mit Obergrenze offener eigener Leads)
+    async uebernehmeLead(leadId, id) {
+      const { data, error } = await client.rpc('lead_uebernehmen_fuer', { p_lead_id: leadId, p_user_id: id })
+      if (error) dbFehler('Lead übernehmen', error)
+      return String(data)
     },
     async ladeZugang(id) {
       const { data, error } = await client.from('telefonie_zugaenge').select(SPALTEN).eq('user_id', id).maybeSingle()
       if (error) dbFehler('Zugang laden', error)
       return (data as ZugangRow | null) ?? null
     },
-    async letzterAnruf(id) {
-      const { data, error } = await client
-        .from('anrufe')
-        .select('gestartet_am')
-        .eq('user_id', id)
-        .order('gestartet_am', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-      if (error) dbFehler('Rate-Limit prüfen', error)
-      return data?.gestartet_am ?? null
+    async reserviereAnruf(row) {
+      const { data, error } = await client.rpc('anruf_reservieren', {
+        p_lead_id: row.lead_id,
+        p_user_id: row.user_id,
+        p_kanal: row.kanal,
+        p_anbieter: row.anbieter,
+      })
+      if (error) dbFehler('Anruf reservieren', error)
+      const zeile = (Array.isArray(data) ? data[0] : data) as { o_id?: string | null; o_grund?: string | null } | undefined
+      if (zeile?.o_id) return { id: zeile.o_id }
+      return { grund: zeile?.o_grund ?? 'abstand' }
     },
-    async speichereAnruf(row) {
-      const { error } = await client.from('anrufe').insert(row)
-      if (error) dbFehler('Anruf protokollieren', error)
+    async bestaetigeAnruf(id, providerCallId) {
+      const { error } = await client.from('anrufe').update({ provider_call_id: providerCallId }).eq('id', id)
+      if (error) dbFehler('Anruf bestätigen', error)
+    },
+    async verwerfeAnruf(id) {
+      const { error } = await client.from('anrufe').delete().eq('id', id)
+      if (error) dbFehler('Anruf verwerfen', error)
     },
   })
   return antwort(res.status, res.body)

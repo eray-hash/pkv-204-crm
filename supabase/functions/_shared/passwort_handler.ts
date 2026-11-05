@@ -21,15 +21,32 @@ export interface AuthAktualisierung {
   user_metadata: { passwort_wechseln: true }
 }
 
+export interface NutzerInfo {
+  name: string | null
+  email: string | null
+}
+
+export interface ProtokollEintrag {
+  gesetzt_von: string
+  fuer_nutzer: string
+  gesetzt_von_name: string | null
+  gesetzt_von_email: string | null
+  fuer_nutzer_name: string | null
+  fuer_nutzer_email: string | null
+}
+
 export interface PasswortDeps {
   jetzt: () => Date
   /** Rolle des Aufrufers aus `profiles` (null, wenn es kein Profil gibt) */
   ladeRolle: (userId: string) => Promise<string | null>
-  nutzerExistiert: (userId: string) => Promise<boolean>
+  /** Name und E-Mail eines Nutzers (fuers Protokoll) oder null, wenn es den Nutzer nicht gibt */
+  ladeNutzerInfo: (userId: string) => Promise<NutzerInfo | null>
   /** supabase.auth.admin.updateUserById(userId, attribute); wirft bei Fehlern (ohne das Passwort in der Meldung) */
   aktualisiereNutzer: (userId: string, attribute: AuthAktualisierung) => Promise<void>
-  /** Protokollzeile ohne Passwortdaten; Fehler hier duerfen den Vorgang nicht verhindern */
-  protokolliere: (eintrag: { gesetzt_von: string; fuer_nutzer: string }) => Promise<void>
+  /** Protokollzeile (ohne Passwortdaten) VOR dem Setzen; schlaegt sie fehl, wird das Passwort nicht geaendert */
+  protokolliere: (eintrag: ProtokollEintrag) => Promise<void>
+  /** Beendet alle Sitzungen des Nutzers (best effort, nach dem Setzen) */
+  beendeSitzungen: (userId: string) => Promise<void>
   /** Letzter Aufruf des Aufrufers (Zeitpunkt in ms) oder null; merkeAufruf speichert den aktuellen */
   letzterAufruf: (userId: string) => number | null
   merkeAufruf: (userId: string, zeit: number) => void
@@ -79,20 +96,35 @@ export async function behandlePasswortSetzen(aufruferId: string, rawBody: unknow
     const regelFehler = pruefePasswortRegeln(b.passwort)
     if (regelFehler) return fehler(400, 'passwort_ungueltig', regelFehler)
 
-    if (!(await deps.nutzerExistiert(userId))) return fehler(404, 'nicht_gefunden', 'Dieses Teammitglied wurde nicht gefunden.')
+    const ziel = await deps.ladeNutzerInfo(userId)
+    if (!ziel) return fehler(404, 'nicht_gefunden', 'Dieses Teammitglied wurde nicht gefunden.')
+    const aufrufer = await deps.ladeNutzerInfo(aufruferId)
 
+    // 1. Protokollzeile ZUERST (mit Name/E-Mail als Text, ohne Passwort). Gelingt sie nicht, wird nichts geaendert (500).
+    await deps.protokolliere({
+      gesetzt_von: aufruferId,
+      fuer_nutzer: userId,
+      gesetzt_von_name: aufrufer?.name ?? null,
+      gesetzt_von_email: aufrufer?.email ?? null,
+      fuer_nutzer_name: ziel.name,
+      fuer_nutzer_email: ziel.email,
+    })
+
+    // 2. Passwort setzen
     await deps.aktualisiereNutzer(userId, {
       password: b.passwort as string,
       email_confirm: true,
       user_metadata: { passwort_wechseln: true },
     })
 
+    // 3. Bestehende Sitzungen des Zielnutzers beenden (best effort: das Passwort ist bereits gesetzt)
+    let sitzungenBeendet = true
     try {
-      await deps.protokolliere({ gesetzt_von: aufruferId, fuer_nutzer: userId })
+      await deps.beendeSitzungen(userId)
     } catch {
-      // Protokoll ist optional (z. B. Migration noch nicht eingespielt); das Passwort wurde bereits gesetzt
+      sitzungenBeendet = false
     }
-    return { status: 200, body: { ok: true } }
+    return { status: 200, body: { ok: true, sitzungenBeendet } }
   } catch {
     // Nichts aus dem Fehlerobjekt weitergeben
     return fehler(500, 'intern', 'Das Passwort konnte nicht gesetzt werden. Bitte später erneut versuchen.')

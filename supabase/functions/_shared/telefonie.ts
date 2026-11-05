@@ -5,6 +5,8 @@
 // - Das sipgate-Token verlaesst diesen Code nie in Richtung Browser, Log oder Fehlermeldung.
 // - Fehlermeldungen sind feste deutsche Texte; Antworttexte von sipgate werden nicht weitergereicht.
 
+import { istErlaubteRufnummer, normalisiereDeutscheRufnummer } from './rufnummer.ts'
+
 export const SIPGATE_BASE = 'https://api.sipgate.com/v2'
 export const ANBIETER_CLASSIC = 'sipgate_classic'
 export const ANBIETER_NEO = 'sipgate_neo'
@@ -30,6 +32,7 @@ export type FehlerCode =
   | 'lead_nicht_gefunden'
   | 'lead_gesperrt'
   | 'lead_vergeben'
+  | 'lead_limit'
   | 'keine_einwilligung'
   | 'keine_geraete'
   | 'konfiguration'
@@ -125,14 +128,9 @@ export async function entschluessele(blob: string, schluessel: CryptoKey, aad: s
 
 // ---------- Rufnummern und Eingaben ----------
 
-const E164 = /^\+[1-9]\d{7,14}$/
-
-/** Wie beim Lead-Webhook: fuehrende 0 -> +49, 00 -> +. Ergebnis immer im Format +49... (E.164) oder null. */
+/** Wie beim Lead-Webhook: nur deutsche Rufnummern (Allowlist, Premium-/Auslandsnummern gesperrt), Ergebnis im Format +49... oder null. */
 export function normalisiereRufnummer(raw: string): string | null {
-  let s = raw.trim().replace(/\(0\)/g, '').replace(/[\s\-/().]/g, '')
-  if (s.startsWith('00')) s = '+' + s.slice(2)
-  else if (s.startsWith('0')) s = '+49' + s.slice(1)
-  return E164.test(s) ? s : null
+  return normalisiereDeutscheRufnummer(raw)
 }
 
 export type Parse<T> = { ok: true; value: T } | { ok: false; meldung: string }
@@ -211,8 +209,20 @@ export function parseAnrufenBody(raw: unknown): Parse<{ leadId: string }> {
 
 // ---------- Regeln fuer Anrufe ----------
 
-/** Mit diesen Status wird ein Lead nicht (mehr) angerufen. */
+/** Status, in denen ein Lead angerufen werden darf (SQL: public.offene_status()). */
+export const OFFENE_STATUS = ['neu', 'kontaktiert', 'nicht_erreicht', 'termin_vereinbart', 'beratung']
+
+/** Mit diesen Status wird ein Lead nicht (mehr) angerufen (alles ausser OFFENE_STATUS). */
 export const GESCHLOSSENE_STATUS = ['verstorben', 'nicht_mehr_pkv', 'kein_interesse', 'schon_umgestellt', 'verloren', 'gewonnen']
+
+/**
+ * Status, in denen ein FREIER Lead per Mitarbeiter uebernommen werden darf (SQL: public.uebernehmbare_status()).
+ * Freie Leads in termin_vereinbart/beratung weist nur der Geschaeftsfuehrer zu.
+ */
+export const UEBERNEHMBARE_STATUS = ['neu', 'kontaktiert', 'nicht_erreicht']
+
+/** Maximales Alter einer Einwilligung (SQL: public.einwilligung_max_alter(), Standard 365 Tage; anwaltlich zu klaeren). */
+export const EINWILLIGUNG_MAX_ALTER_TAGE = 365
 
 export interface LeadFuerAnruf {
   id: string
@@ -221,23 +231,46 @@ export interface LeadFuerAnruf {
   ist_test: boolean
   /** Nutzer, dem der Lead zugewiesen ist; null = frei */
   zugewiesen_an?: string | null
+  /** Zeitpunkt der Sperre/des Widerrufs; null = nicht gesperrt */
+  gesperrt_am?: string | null
 }
 
-/** Prueft, ob der Lead angerufen werden darf, und gibt die Rufnummer (E.164) zurueck. */
-export function pruefeLeadAnrufbar(lead: LeadFuerAnruf | null, hatEinwilligung: boolean): string {
+/**
+ * Prueft, ob der Lead angerufen werden darf, und gibt die Rufnummer (E.164, nur +49) zurueck. Spiegelt die zentrale
+ * Datenbankpruefung public.darf_angerufen_werden (die zusaetzlich als letzte Instanz abgefragt wird) und liefert genaue Meldungen.
+ */
+export function pruefeLeadAnrufbar(lead: LeadFuerAnruf | null, einwilligungZeit: string | null, jetzt: Date = new Date()): string {
   if (!lead) throw new TelefonieFehler('lead_nicht_gefunden', 'Dieser Lead wurde nicht gefunden.', 404)
   if (lead.ist_test) throw new TelefonieFehler('lead_gesperrt', 'Testleads dürfen nicht angerufen werden.', 403)
-  if (GESCHLOSSENE_STATUS.includes(lead.status)) {
+  if (lead.gesperrt_am) {
+    throw new TelefonieFehler('lead_gesperrt', 'Dieser Lead ist gesperrt (Widerruf oder Löschwunsch) und darf nicht angerufen werden.', 403)
+  }
+  if (!OFFENE_STATUS.includes(lead.status)) {
     throw new TelefonieFehler('lead_gesperrt', 'Dieser Lead ist abgeschlossen und darf nicht mehr angerufen werden.', 403)
   }
-  if (!hatEinwilligung) {
+  if (!einwilligungZeit) {
     throw new TelefonieFehler('keine_einwilligung', 'Für diesen Lead liegt kein Einwilligungsnachweis vor. Er darf nicht angerufen werden.', 403)
   }
+  const t = Date.parse(einwilligungZeit)
+  if (Number.isNaN(t) || t < jetzt.getTime() - EINWILLIGUNG_MAX_ALTER_TAGE * 86_400_000) {
+    throw new TelefonieFehler('keine_einwilligung', 'Die Einwilligung zu diesem Lead ist zu alt. Er darf nicht mehr angerufen werden.', 403)
+  }
   const nummer = typeof lead.telefon === 'string' ? lead.telefon.trim() : ''
-  if (!E164.test(nummer)) {
-    throw new TelefonieFehler('nummer_ungueltig', 'Die Rufnummer dieses Leads ist ungültig und kann nicht gewählt werden.', 422)
+  if (!istErlaubteRufnummer(nummer)) {
+    throw new TelefonieFehler('nummer_ungueltig', 'Die Rufnummer dieses Leads ist nicht zulässig (nur deutsche Rufnummern) und kann nicht gewählt werden.', 422)
   }
   return nummer
+}
+
+/** Ein FREIER Lead darf nur in uebernehmbaren Status per Mitarbeiter uebernommen werden (sonst weist der Geschaeftsfuehrer zu). */
+export function pruefeUebernehmbar(lead: Pick<LeadFuerAnruf, 'status'>): void {
+  if (!UEBERNEHMBARE_STATUS.includes(lead.status)) {
+    throw new TelefonieFehler(
+      'lead_gesperrt',
+      'Dieser Lead ist noch frei, kann aber in seinem Status nur vom Geschäftsführer zugewiesen werden.',
+      403,
+    )
+  }
 }
 
 /**

@@ -45,6 +45,8 @@ export default function PowerDialer() {
   // sipgate-Telefonie: 'laden' bis der Status bekannt ist; bei Fehlern/ohne Verbindung faellt "Mobil" auf tel: zurueck
   const [telefonie, setTelefonie] = useState<'laden' | 'verbunden' | 'nicht_verbunden'>('laden')
   const [mobilBusy, setMobilBusy] = useState(false)
+  // Sperrt die tel:-Links waehrend Uebernahme/Protokoll laufen (kein doppelter Anruf-Eintrag bei Doppelklick)
+  const [telBusy, setTelBusy] = useState(false)
   const [mobilFehler, setMobilFehler] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [spaeterOffen, setSpaeterOffen] = useState(false)
@@ -140,25 +142,32 @@ export default function PowerDialer() {
     return false
   }
 
-  async function anrufen(kanal: AnrufKanal) {
-    if (!aktuell || !session) return
+  // Protokolliert den Anruf. Lehnt die Datenbank ab (Limits, gesperrt, keine Einwilligung), wird NICHT gewaehlt.
+  async function anrufen(kanal: AnrufKanal): Promise<boolean> {
+    if (!aktuell || !session) return false
     const err = await logAnruf(aktuell.id, session.user.id, kanal)
-    if (err) showToast(`${err} Der Anruf wird trotzdem gestartet.`, 'info')
-    else setAngerufen({ kanal, zeit: new Date().toISOString() })
+    if (err) {
+      showToast(err, 'info')
+      return false
+    }
+    setAngerufen({ kanal, zeit: new Date().toISOString() })
+    return true
   }
 
-  // tel:-Link: Ein freier Lead wird VOR dem Waehlen uebernommen (Navigation erst danach), eigene Leads wie bisher direkt.
+  // tel:-Link: Ein freier Lead wird VOR dem Waehlen uebernommen, der Anruf protokolliert, und erst danach gewaehlt.
+  // Wird die Uebernahme oder das Protokoll abgelehnt, wird nicht gewaehlt.
   async function telKlick(e: MouseEvent<HTMLAnchorElement>, kanal: AnrufKanal) {
-    if (!aktuell) return
-    if (aktuellFrei) {
-      e.preventDefault()
-      const href = e.currentTarget.href
-      if (!(await sichereUebernahme(aktuell, true))) return
-      await anrufen(kanal)
+    e.preventDefault()
+    if (!aktuell || telBusy) return
+    const href = e.currentTarget.href
+    setTelBusy(true)
+    try {
+      if (aktuellFrei && !(await sichereUebernahme(aktuell, true))) return
+      if (!(await anrufen(kanal))) return
       window.location.href = href
-      return
+    } finally {
+      setTelBusy(false)
     }
-    void anrufen(kanal)
   }
 
   // Mobil (Satellite) ueber sipgate: Es wird nur die Lead-ID gesendet; die Funktion laedt die Nummer selbst, uebernimmt einen freien Lead

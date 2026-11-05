@@ -251,15 +251,35 @@ test('unerwartete Fehler (z. B. Datenbank) liefern nur einen festen Text', async
 
 // ---------- anrufen ----------
 
+interface Zeile {
+  id: string
+  lead_id: string
+  user_id: string
+  kanal: 'mobil'
+  anbieter: string
+  provider_call_id: string | null
+}
+
 interface Welt {
   sip: Sipgate
   deps: AnrufenDeps
-  anrufe: { lead_id: string; user_id: string; kanal: 'mobil'; anbieter: string; provider_call_id: string | null }[]
-  lead: { id: string; telefon: string; status: string; ist_test: boolean; zugewiesen_an?: string | null } | null
+  /** Protokolltabelle "anrufe" (reservierte und bestaetigte Zeilen) */
+  anrufe: Zeile[]
+  lead: { id: string; telefon: string; status: string; ist_test: boolean; zugewiesen_an?: string | null; gesperrt_am?: string | null } | null
   uebernahmen: string[]
   ereignisse: string[]
-  welt: { einwilligung: boolean; letzterAnruf: string | null; verbunden: boolean }
+  welt: {
+    einwilligungZeit: string | null
+    zentralOk: boolean
+    verbunden: boolean
+    /** Ergebnis der Datenbankfunktion lead_uebernehmen_fuer, wenn gesetzt (sonst echte Simulation) */
+    uebernahme: string | null
+    /** Grund, mit dem die Reservierung abgelehnt wird (lead_limit | nutzer_limit | abstand) */
+    limit: string | null
+  }
 }
+
+const JETZT = new Date('2026-10-28T10:00:10.000Z')
 
 async function weltMitZugang(): Promise<Welt> {
   const sip = fakeSipgate()
@@ -270,40 +290,55 @@ async function weltMitZugang(): Promise<Welt> {
   const w: Welt = {
     sip,
     anrufe: [],
-    lead: { id: LEAD_ID, telefon: '+4915112345678', status: 'neu', ist_test: false, zugewiesen_an: null },
+    lead: { id: LEAD_ID, telefon: '+4915112345678', status: 'neu', ist_test: false, zugewiesen_an: null, gesperrt_am: null },
     uebernahmen: [],
     ereignisse: [],
-    welt: { einwilligung: true, letzterAnruf: null, verbunden: true },
+    welt: { einwilligungZeit: '2026-10-20T08:00:00.000Z', zentralOk: true, verbunden: true, uebernahme: null, limit: null },
     deps: undefined as unknown as AnrufenDeps,
   }
+  let zaehler = 0
   w.deps = {
     schluessel: () => KEY,
     fetch: async (url, init) => {
       if (url.endsWith('/sessions/calls') || url.endsWith('/v2/calls')) w.ereignisse.push('sipgate-anruf')
       return sip.fetch(url, init)
     },
-    jetzt: () => new Date('2026-10-28T10:00:10.000Z'),
+    jetzt: () => JETZT,
     ladeLead: async () => w.lead,
+    einwilligungZeit: async () => w.welt.einwilligungZeit,
+    darfAngerufenWerden: async () => w.welt.zentralOk,
     uebernehmeLead: async (leadId, userId) => {
       w.ereignisse.push('uebernahme')
-      const frei = !w.lead?.zugewiesen_an || w.lead.zugewiesen_an === userId
-      if (frei && w.lead) {
-        w.lead.zugewiesen_an = userId
-        w.uebernahmen.push(leadId)
-      }
-      return Boolean(frei)
+      if (w.welt.uebernahme) return w.welt.uebernahme
+      if (w.lead?.zugewiesen_an && w.lead.zugewiesen_an !== userId) return 'vergeben'
+      if (w.lead) w.lead.zugewiesen_an = userId
+      w.uebernahmen.push(leadId)
+      return 'ok'
     },
-    hatEinwilligung: async () => w.welt.einwilligung,
     ladeZugang: async (id) => (w.welt.verbunden ? (store.get(id) ?? null) : null),
-    letzterAnruf: async () => w.welt.letzterAnruf,
-    speichereAnruf: async (row) => void w.anrufe.push(row),
+    reserviereAnruf: async (row) => {
+      w.ereignisse.push('reservierung')
+      if (w.welt.limit) return { grund: w.welt.limit }
+      const zeile: Zeile = { id: `r${++zaehler}`, ...row, provider_call_id: null }
+      w.anrufe.push(zeile)
+      return { id: zeile.id }
+    },
+    bestaetigeAnruf: async (id, providerCallId) => {
+      w.ereignisse.push('bestaetigung')
+      const z = w.anrufe.find((x) => x.id === id)
+      if (z) z.provider_call_id = providerCallId
+    },
+    verwerfeAnruf: async (id) => {
+      w.ereignisse.push('verworfen')
+      w.anrufe = w.anrufe.filter((x) => x.id !== id)
+    },
   }
   return w
 }
 
 const anrufAufrufe = (w: Welt) => w.sip.aufrufe.filter((a) => a.url.endsWith('/sessions/calls'))
 
-test('anrufen: Rufnummer kommt aus der Datenbank (nicht vom Client), Anruf wird protokolliert', async () => {
+test('anrufen: Rufnummer kommt aus der Datenbank (nicht vom Client), Anruf wird reserviert und bestaetigt', async () => {
   const w = await weltMitZugang()
   const res = await behandleAnrufen(USER, { lead_id: LEAD_ID, telefon: '+491111111111', callee: '+492222222222' }, w.deps)
   assert.equal(res.status, 200)
@@ -313,14 +348,24 @@ test('anrufen: Rufnummer kommt aus der Datenbank (nicht vom Client), Anruf wird 
   assert.equal(calls[0].method, 'POST')
   assert.equal(calls[0].auth, BASIC)
   assert.deepEqual(calls[0].body, { caller: 'm0', callee: '+4915112345678' })
-  assert.deepEqual(w.anrufe, [{ lead_id: LEAD_ID, user_id: USER, kanal: 'mobil', anbieter: 'sipgate_classic', provider_call_id: 'sess-1' }])
+  assert.deepEqual(w.anrufe.map(({ id: _id, ...rest }) => rest), [{ lead_id: LEAD_ID, user_id: USER, kanal: 'mobil', anbieter: 'sipgate_classic', provider_call_id: 'sess-1' }])
   assert.ok(!alsText(res.body).includes(TOKEN))
 })
 
-test('anrufen: Testlead und geschlossene Leads werden verweigert, ohne sipgate anzurufen', async () => {
+test('anrufen: Reihenfolge Reservierung -> Uebernahme -> sipgate -> Bestaetigung', async () => {
+  const w = await weltMitZugang()
+  await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)
+  assert.deepEqual(w.ereignisse, ['reservierung', 'uebernahme', 'sipgate-anruf', 'bestaetigung'])
+})
+
+test('anrufen: Testlead, gesperrter und geschlossene Leads werden verweigert, ohne Reservierung oder sipgate-Aufruf', async () => {
   const w = await weltMitZugang()
   w.lead = { id: LEAD_ID, telefon: '+4915112345678', status: 'neu', ist_test: true }
   assert.equal((await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)).body.code, 'lead_gesperrt')
+  w.lead = { id: LEAD_ID, telefon: '+4915112345678', status: 'neu', ist_test: false, gesperrt_am: '2026-10-27T10:00:00Z' }
+  const gesperrt = await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)
+  assert.equal(gesperrt.body.code, 'lead_gesperrt')
+  assert.match(String(gesperrt.body.fehler), /gesperrt/)
   for (const status of ['verstorben', 'nicht_mehr_pkv', 'kein_interesse', 'schon_umgestellt', 'verloren', 'gewonnen']) {
     w.lead = { id: LEAD_ID, telefon: '+4915112345678', status, ist_test: false }
     const res = await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)
@@ -329,15 +374,40 @@ test('anrufen: Testlead und geschlossene Leads werden verweigert, ohne sipgate a
   }
   assert.equal(w.sip.aufrufe.length, 0)
   assert.equal(w.anrufe.length, 0)
+  assert.deepEqual(w.ereignisse, [])
 })
 
-test('anrufen: ohne Einwilligungsnachweis oder unbekannter Lead wird verweigert', async () => {
+test('anrufen: ohne Einwilligung, abgelaufene Einwilligung oder unbekannter Lead wird verweigert', async () => {
   const w = await weltMitZugang()
-  w.welt.einwilligung = false
+  w.welt.einwilligungZeit = null
   assert.equal((await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)).body.code, 'keine_einwilligung')
+  w.welt.einwilligungZeit = '2025-10-01T00:00:00.000Z' // aelter als 365 Tage
+  const alt = await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)
+  assert.equal(alt.body.code, 'keine_einwilligung')
+  assert.match(String(alt.body.fehler), /zu alt/)
   w.lead = null
   assert.equal((await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)).status, 404)
   assert.equal(w.sip.aufrufe.length, 0)
+})
+
+test('anrufen: Premium-, Ausland- und kaputte Nummern aus Altdaten werden nicht gewaehlt', async () => {
+  const w = await weltMitZugang()
+  for (const telefon of ['+4990012345678', '+436641234567', '+4915123', '015112345678', '+4932123456789', '+49180512345']) {
+    w.lead = { id: LEAD_ID, telefon, status: 'neu', ist_test: false }
+    const res = await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)
+    assert.equal(res.body.code, 'nummer_ungueltig', telefon)
+  }
+  assert.equal(w.sip.aufrufe.length, 0)
+  assert.deepEqual(w.ereignisse, [])
+})
+
+test('anrufen: die zentrale Datenbankpruefung ist die letzte Instanz', async () => {
+  const w = await weltMitZugang()
+  w.welt.zentralOk = false
+  const res = await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)
+  assert.equal(res.status, 403)
+  assert.equal(res.body.code, 'lead_gesperrt')
+  assert.deepEqual(w.ereignisse, [])
 })
 
 test('anrufen: ungueltige Lead-ID ergibt 400', async () => {
@@ -347,7 +417,7 @@ test('anrufen: ungueltige Lead-ID ergibt 400', async () => {
   assert.equal(w.sip.aufrufe.length, 0)
 })
 
-test('anrufen: ohne verbundene Telefonie kommt "nicht verbunden"', async () => {
+test('anrufen: ohne verbundene Telefonie kommt "nicht verbunden", ohne Reservierung und Uebernahme', async () => {
   const w = await weltMitZugang()
   w.welt.verbunden = false
   const res = await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)
@@ -355,17 +425,28 @@ test('anrufen: ohne verbundene Telefonie kommt "nicht verbunden"', async () => {
   assert.equal(res.body.code, 'nicht_verbunden')
   assert.match(String(res.body.fehler), /Mein Profil/)
   assert.equal(w.sip.aufrufe.length, 0)
+  assert.deepEqual(w.ereignisse, [])
+  assert.equal(w.lead!.zugewiesen_an, null)
 })
 
-test('anrufen: Rate-Limit pro Nutzer (3 Sekunden)', async () => {
-  const w = await weltMitZugang()
-  w.welt.letzterAnruf = '2026-10-28T10:00:08.500Z'
-  const res = await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)
-  assert.equal(res.status, 429)
-  assert.equal(res.body.code, 'zu_viele_anfragen')
-  assert.equal(w.sip.aufrufe.length, 0)
-  w.welt.letzterAnruf = '2026-10-28T10:00:06.000Z'
-  assert.equal((await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)).status, 200)
+test('anrufen: Limits (pro Lead 10 Minuten, pro Nutzer 30 je Stunde, 3 Sekunden Abstand) kommen aus der Datenbank und sperren vor sipgate und Uebernahme', async () => {
+  const faelle: [string, RegExp][] = [
+    ['lead_limit', /10 Minuten/],
+    ['nutzer_limit', /30 Anrufen pro Stunde/],
+    ['abstand', /einen Moment/],
+  ]
+  for (const [grund, text] of faelle) {
+    const w = await weltMitZugang()
+    w.welt.limit = grund
+    const res = await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)
+    assert.equal(res.status, 429, grund)
+    assert.equal(res.body.code, 'zu_viele_anfragen')
+    assert.match(String(res.body.fehler), text)
+    assert.equal(w.sip.aufrufe.length, 0)
+    assert.deepEqual(w.ereignisse, ['reservierung'], 'weder Uebernahme noch Anruf')
+    assert.equal(w.lead!.zugewiesen_an, null)
+    assert.equal(w.anrufe.length, 0)
+  }
 })
 
 test('anrufen: paralleler zweiter Anruf desselben Nutzers wird abgewiesen', async () => {
@@ -373,11 +454,10 @@ test('anrufen: paralleler zweiter Anruf desselben Nutzers wird abgewiesen', asyn
   const [a, b] = await Promise.all([behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps), behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)])
   assert.deepEqual([a.status, b.status].sort(), [200, 429])
   assert.equal(anrufAufrufe(w).length, 1)
-  // danach ist die Sperre wieder frei
   assert.equal((await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)).status, 200)
 })
 
-test('anrufen: sipgate-Fehler werden auf deutsche Meldungen ohne Details abgebildet und nicht protokolliert', async () => {
+test('anrufen: sipgate-Fehler werden auf deutsche Meldungen ohne Details abgebildet, die Reservierung wird geloescht', async () => {
   const faelle: [number, string][] = [
     [401, 'token_ungueltig'],
     [403, 'rechte_fehlen'],
@@ -392,18 +472,28 @@ test('anrufen: sipgate-Fehler werden auf deutsche Meldungen ohne Details abgebil
     assert.equal(res.body.code, code, String(status))
     assert.ok(res.status >= 400)
     assert.ok(!alsText(res.body).includes(TOKEN))
-    assert.equal(w.anrufe.length, 0, 'fehlgeschlagene Anrufe werden nicht protokolliert')
+    assert.equal(w.anrufe.length, 0, 'fehlgeschlagene Anrufe bleiben nicht im Protokoll')
+    assert.deepEqual(w.ereignisse, ['reservierung', 'uebernahme', 'sipgate-anruf', 'verworfen'])
   }
 })
 
-test('anrufen: Fehler beim Protokollieren kippt den ausgeloesten Anruf nicht', async () => {
+test('anrufen: Fehler beim Bestaetigen kippt den ausgeloesten Anruf nicht', async () => {
   const w = await weltMitZugang()
-  w.deps.speichereAnruf = async () => {
+  w.deps.bestaetigeAnruf = async () => {
     throw new Error('db down')
   }
   const res = await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)
   assert.equal(res.status, 200)
   assert.deepEqual(res.body, { ok: true, protokolliert: false })
+})
+
+test('anrufen: Fehler beim Verwerfen ueberdeckt den Originalfehler nicht', async () => {
+  const w = await weltMitZugang()
+  w.sip.verhalten.call = 403
+  w.deps.verwerfeAnruf = async () => {
+    throw new Error('db down')
+  }
+  assert.equal((await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)).body.code, 'rechte_fehlen')
 })
 
 test('anrufen: mit eigener Rufnummer und angezeigter Rufnummer wird der passende Body gesendet', async () => {
@@ -424,16 +514,30 @@ test('anrufen: freier Lead wird VOR dem sipgate-Aufruf atomar uebernommen', asyn
   const w = await weltMitZugang()
   const res = await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)
   assert.equal(res.status, 200)
-  assert.deepEqual(w.ereignisse, ['uebernahme', 'sipgate-anruf'])
   assert.deepEqual(w.uebernahmen, [LEAD_ID])
+  assert.ok(w.ereignisse.indexOf('uebernahme') < w.ereignisse.indexOf('sipgate-anruf'))
   assert.equal(w.lead!.zugewiesen_an, USER)
 })
 
-test('anrufen: eigener Lead wird nicht erneut uebernommen', async () => {
+test('anrufen: eigener Lead wird nicht erneut uebernommen (auch in beratung)', async () => {
   const w = await weltMitZugang()
   w.lead!.zugewiesen_an = USER
+  w.lead!.status = 'beratung'
   assert.equal((await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)).status, 200)
-  assert.deepEqual(w.ereignisse, ['sipgate-anruf'])
+  assert.ok(!w.ereignisse.includes('uebernahme'))
+})
+
+test('anrufen (M1): FREIER Lead in beratung/termin_vereinbart wird nicht uebernommen und nicht angerufen', async () => {
+  for (const status of ['beratung', 'termin_vereinbart']) {
+    const w = await weltMitZugang()
+    w.lead!.status = status
+    const res = await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)
+    assert.equal(res.status, 403, status)
+    assert.equal(res.body.code, 'lead_gesperrt')
+    assert.match(String(res.body.fehler), /Geschäftsführer/)
+    assert.deepEqual(w.ereignisse, [], status)
+    assert.equal(w.lead!.zugewiesen_an, null)
+  }
 })
 
 test('anrufen: Lead eines anderen wird mit 409 verweigert (ohne Namen), kein Anruf, keine Uebernahme', async () => {
@@ -448,13 +552,33 @@ test('anrufen: Lead eines anderen wird mit 409 verweigert (ohne Namen), kein Anr
   assert.equal(w.anrufe.length, 0)
 })
 
-test('anrufen: Wettlauf - wird der Lead zwischen Pruefung und Uebernahme vergeben, kommt 409 und es wird nicht angerufen', async () => {
+test('anrufen: Wettlauf - wird der Lead nach der Pruefung vergeben, kommt 409, kein Anruf, Reservierung geloescht', async () => {
   const w = await weltMitZugang()
-  w.deps.uebernehmeLead = async () => false
+  w.welt.uebernahme = 'vergeben'
   const res = await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)
   assert.equal(res.status, 409)
   assert.equal(res.body.code, 'lead_vergeben')
   assert.equal(anrufAufrufe(w).length, 0)
+  assert.equal(w.anrufe.length, 0)
+  assert.deepEqual(w.ereignisse, ['reservierung', 'uebernahme', 'verworfen'])
+})
+
+test('anrufen: Obergrenze offener eigener Leads und weitere Uebernahme-Ergebnisse werden verstaendlich gemeldet', async () => {
+  const faelle: [string, number, string][] = [
+    ['limit', 409, 'lead_limit'],
+    ['nicht_uebernehmbar', 403, 'lead_gesperrt'],
+    ['nicht_gefunden', 404, 'lead_nicht_gefunden'],
+    ['komisch', 500, 'intern'],
+  ]
+  for (const [ergebnis, status, code] of faelle) {
+    const w = await weltMitZugang()
+    w.welt.uebernahme = ergebnis
+    const res = await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)
+    assert.equal(res.status, status, ergebnis)
+    assert.equal(res.body.code, code, ergebnis)
+    assert.equal(w.sip.aufrufe.length, 0)
+    assert.equal(w.anrufe.length, 0)
+  }
 })
 
 test('anrufen: scheitert sipgate NACH der Uebernahme, bleibt der Lead dem Nutzer zugewiesen', async () => {
@@ -464,21 +588,6 @@ test('anrufen: scheitert sipgate NACH der Uebernahme, bleibt der Lead dem Nutzer
   assert.equal(res.body.code, 'rechte_fehlen')
   assert.equal(w.lead!.zugewiesen_an, USER)
   assert.equal(w.anrufe.length, 0)
-})
-
-test('anrufen: ohne verbundene Telefonie wird der freie Lead nicht uebernommen', async () => {
-  const w = await weltMitZugang()
-  w.welt.verbunden = false
-  assert.equal((await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)).body.code, 'nicht_verbunden')
-  assert.deepEqual(w.ereignisse, [])
-  assert.equal(w.lead!.zugewiesen_an, null)
-})
-
-test('anrufen: gesperrte Leads (geschlossen) werden nicht uebernommen', async () => {
-  const w = await weltMitZugang()
-  w.lead!.status = 'verstorben'
-  assert.equal((await behandleAnrufen(USER, { lead_id: LEAD_ID }, w.deps)).body.code, 'lead_gesperrt')
-  assert.deepEqual(w.ereignisse, [])
 })
 
 test('anrufen mit Neo-Konto: POST /calls mit deviceId/targetNumber, Protokoll mit anbieter sipgate_neo', async () => {
