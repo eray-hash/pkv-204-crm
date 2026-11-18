@@ -14,8 +14,8 @@ const db = new PGlite()
 await db.exec(readFileSync(new URL('./supabase_geruest.sql', import.meta.url), 'utf8'))
 const dateien = readdirSync(dir).filter((f) => f.endsWith('.sql')).sort()
 for (const f of dateien) await db.exec(readFileSync(dir + f, 'utf8').replace('create extension if not exists pgcrypto with schema extensions;', ''))
-// Wiederholbarkeit: die drei QA-Migrationen in Reihenfolge ein zweites Mal ausfuehren
-for (const f of dateien.filter((x) => x.startsWith('20261103'))) await db.exec(readFileSync(dir + f, 'utf8'))
+// Wiederholbarkeit: alle Migrationen ab 03.11. (QA-Haertung, Nachpruefung, Sichtbarkeit ...) in Reihenfolge ein zweites Mal ausfuehren
+for (const f of dateien.filter((x) => x >= '20261103')) await db.exec(readFileSync(dir + f, 'utf8'))
 
 const GF = '10000000-0000-4000-8000-000000000001', A = '10000000-0000-4000-8000-000000000002', B = '10000000-0000-4000-8000-000000000003'
 await db.exec(`insert into auth.users (id, email) values ('${GF}','gf@x.test'), ('${A}','a@x.test'), ('${B}','b@x.test');
@@ -51,10 +51,16 @@ assert.equal((await q('select moegliches_duplikat_von d from public.leads where 
 
 // --- RLS Leads ---
 let sichtA = (await als('authenticated', A, () => q('select id from public.leads'))).rows.length
-assert.equal(sichtA, 4, 'A sieht freie Leads in uebernehmbarem Status (der geschlossene l3 ist fuer Mitarbeiter unsichtbar)')
+assert.equal(sichtA, 5, 'Option A: Mitarbeiter sehen ALLE Leads (auch geschlossene), nur keine Testleads')
 assert.equal(await als('authenticated', A, async () => (await q('select public.lead_uebernehmen($1) r', [l1.o_lead_id])).rows[0].r), true)
 assert.equal(await als('authenticated', B, async () => (await q('select public.lead_uebernehmen($1) r', [l1.o_lead_id])).rows[0].r), false, 'B bekommt vergebenen Lead nicht')
-assert.equal((await als('authenticated', B, () => q('select id from public.leads where id=$1', [l1.o_lead_id]))).rows.length, 0, 'B sieht fremden Lead nicht')
+assert.equal((await als('authenticated', B, () => q('select id from public.leads where id=$1', [l1.o_lead_id]))).rows.length, 1, 'B sieht den Lead von A (nur zum Ansehen)')
+// ... aendern, uebernehmen, umhaengen darf B ihn nicht
+assert.equal((await als('authenticated', B, () => q(`update public.leads set status='kontaktiert' where id=$1 returning id`, [l1.o_lead_id]))).rows.length, 0, 'B kann den Status von A nicht aendern (RLS: 0 Zeilen)')
+assert.equal((await als('authenticated', B, () => q(`update public.leads set naechster_anruf_ab=now() where id=$1 returning id`, [l1.o_lead_id]))).rows.length, 0)
+await als('authenticated', B, () => fehler(q('select public.lead_zuweisen($1,$2)', [l1.o_lead_id, B]), '42501'))
+assert.equal(await als('authenticated', B, async () => (await q('select public.lead_freigeben($1) r', [l1.o_lead_id])).rows[0].r), false, 'B kann den Lead von A nicht freigeben')
+assert.equal((await q('select zugewiesen_an z from public.leads where id=$1', [l1.o_lead_id])).rows[0].z, A, 'Besitzer unveraendert')
 assert.equal((await als('authenticated', GF, () => q('select id from public.leads where id=$1', [l1.o_lead_id]))).rows.length, 1, 'GF sieht alles')
 assert.equal((await als('authenticated', A, () => q('select id from public.leads where id=$1', [l1.o_lead_id]))).rows.length, 1)
 
@@ -65,7 +71,7 @@ await als('authenticated', A, () => fehler(q('select payload_roh from public.con
 assert.equal((await als('authenticated', GF, () => q('select id, einwilligung_text from public.consent_records'))).rows.length >= 4, true, 'GF liest Consent (ohne IP-Spalte)')
 await als('authenticated', GF, () => fehler(q('select einwilligung_ip from public.consent_records'), '42501'))
 assert.equal((await als('authenticated', A, () => q('select * from public.lead_einwilligung($1)', [l1.o_lead_id]))).rows.length, 1)
-assert.equal((await als('authenticated', B, () => q('select * from public.lead_einwilligung($1)', [l1.o_lead_id]))).rows.length, 0, 'B bekommt fremden Nachweis nicht')
+assert.equal((await als('authenticated', B, () => q('select * from public.lead_einwilligung($1)', [l1.o_lead_id]))).rows.length, 1, 'Nachweis (ohne IP) auch fuer Leads von Kollegen')
 assert.equal((await als('authenticated', B, () => q('select * from public.lead_einwilligung($1)', [l2.o_lead_id]))).rows.length, 1, 'freier Lead: Nachweis sichtbar')
 const cols = (await als('authenticated', A, () => q('select * from public.lead_einwilligung($1)', [l1.o_lead_id]))).fields.map((f) => f.name)
 assert.deepEqual(cols, ['einwilligung_zeit', 'einwilligung_text', 'einwilligung_quelle'])
@@ -74,19 +80,32 @@ assert.deepEqual(cols, ['einwilligung_zeit', 'einwilligung_text', 'einwilligung_
 const queueA = (await als('authenticated', A, () => q('select id from public.anrufbare_leads'))).rows.map((r) => r.id)
 assert.ok(queueA.includes(l1.o_lead_id) && queueA.includes(l2.o_lead_id) && !queueA.includes(l3.o_lead_id), 'Queue: frei + eigen, nicht geschlossen')
 
-// M6: freie Leads nur sichtbar, wenn uebernehmbar, nicht gesperrt und kein Testlead (GF sieht alles)
+// Option A: alle Leads ausser Testleads sind sichtbar (auch gesperrt, geschlossen, beratung ...); Testleads nur fuer den Geschaeftsfuehrer
 const frei = async (uid, id) => (await als('authenticated', uid, () => q('select id from public.leads where id=$1', [id]))).rows.length
-assert.equal(await frei(A, l3.o_lead_id), 0, 'freier, geschlossener Lead ist fuer Mitarbeiter unsichtbar')
+assert.equal(await frei(A, l3.o_lead_id), 1, 'geschlossener Lead ist fuer Mitarbeiter sichtbar')
 assert.equal(await frei(GF, l3.o_lead_id), 1)
 for (const [spalte, wert] of [["status", "'beratung'"], ["status", "'termin_vereinbart'"], ["gesperrt_am", 'now()'], ["ist_test", 'true']]) {
   await db.exec(`update public.leads set ${spalte}=${wert} where id='${alt.rows[0].o_lead_id}'`)
-  assert.equal(await frei(A, alt.rows[0].o_lead_id), 0, `frei + ${spalte}=${wert}: unsichtbar`)
-  assert.equal(await frei(GF, alt.rows[0].o_lead_id), 1)
-  assert.equal((await als('authenticated', A, () => q('select * from public.lead_einwilligung($1)', [alt.rows[0].o_lead_id]))).rows.length, 0, 'auch der Nachweis ist dann nicht abrufbar')
+  const fuerMitarbeiter = spalte === 'ist_test' ? 0 : 1
+  assert.equal(await frei(A, alt.rows[0].o_lead_id), fuerMitarbeiter, `${spalte}=${wert}: Sicht fuer Mitarbeiter`)
+  assert.equal(await frei(GF, alt.rows[0].o_lead_id), 1, 'der Geschaeftsfuehrer sieht alles')
+  assert.equal((await als('authenticated', A, () => q('select * from public.lead_einwilligung($1)', [alt.rows[0].o_lead_id]))).rows.length, fuerMitarbeiter, 'Nachweis folgt der Sicht')
   assert.equal((await als('authenticated', GF, () => q('select * from public.lead_einwilligung($1)', [alt.rows[0].o_lead_id]))).rows.length, 1)
+  // gesperrte/geschlossene freie Leads sind sichtbar, aber nicht uebernehmbar und nicht anrufbar
+  if (spalte === 'gesperrt_am') {
+    assert.equal((await q(`select public.lead_uebernehmen_fuer($1,$2) r`, [alt.rows[0].o_lead_id, B])).rows[0].r, 'nicht_uebernehmbar')
+    assert.equal((await q('select public.darf_angerufen_werden($1) r', [alt.rows[0].o_lead_id])).rows[0].r, false)
+  }
   await db.exec(`update public.leads set status='neu', gesperrt_am=null, ist_test=false where id='${alt.rows[0].o_lead_id}'`)
 }
 assert.equal(await frei(A, alt.rows[0].o_lead_id), 1)
+
+// Der Power Dialer (Ansicht anrufbare_leads) bleibt bei freien und eigenen Leads: Leads von Kollegen kommen nicht vor, auch nicht fuer den GF
+const ids = async (uid) => (await als('authenticated', uid, () => q('select id from public.anrufbare_leads'))).rows.map((r) => r.id)
+assert.ok((await ids(A)).includes(l1.o_lead_id), 'A: eigener Lead in der Dialer-Liste')
+assert.ok(!(await ids(B)).includes(l1.o_lead_id), 'B: Lead von A nicht in der Dialer-Liste')
+assert.ok(!(await ids(GF)).includes(l1.o_lead_id), 'GF: Lead von A nicht in der Dialer-Liste')
+assert.ok((await ids(B)).includes(l2.o_lead_id), 'B: freie Leads sind in der Dialer-Liste')
 
 // Beratung/termin_vereinbart frei: nicht uebernehmbar, nicht in Queue
 await db.exec(`update public.leads set status='beratung' where id='${l2.o_lead_id}'`)
@@ -118,7 +137,7 @@ await als('authenticated', A, () => fehler(q(`insert into public.anrufe (lead_id
 await als('authenticated', A, () => fehler(q(`insert into public.anrufe (lead_id, user_id, kanal) values ($1,$2,'mobil')`, [l1.o_lead_id, B]), '42501')) // fremde user_id
 await als('authenticated', A, () => fehler(q(`insert into public.anrufe (lead_id, user_id, kanal, anbieter) values ($1,$2,'mobil','x')`, [l1.o_lead_id, A]), '42501')) // Spalte ohne Grant
 assert.equal((await als('authenticated', A, () => q('select id from public.anrufe'))).rows.length, 1)
-assert.equal((await als('authenticated', B, () => q('select id from public.anrufe'))).rows.length, 0, 'B sieht fremde Anrufe nicht')
+assert.equal((await als('authenticated', B, () => q('select id from public.anrufe'))).rows.length, 1, 'B sieht die Anrufe zu Leads von Kollegen (nur lesen)')
 const res1 = await als('service_role', null, () => q(`select * from public.anruf_reservieren($1,$2,'mobil','sipgate_classic')`, [l3.o_lead_id, GF])); assert.ok(res1.rows[0].o_id)
 const res2 = await als('service_role', null, () => q(`select * from public.anruf_reservieren($1,$2,'mobil','sipgate_classic')`, [l3.o_lead_id, GF])); assert.equal(res2.rows[0].o_grund, 'lead_limit')
 // Nutzer-Limit: 30 pro Stunde
@@ -207,7 +226,7 @@ await als('authenticated', A, () => fehler(q('select * from public.ingest_lead()
 // Notizen
 await als('authenticated', A, () => q(`insert into public.lead_notizen (lead_id, user_id, text) values ($1,$2,'hallo')`, [l1.o_lead_id, A]))
 assert.equal((await als('authenticated', A, () => q('select id from public.lead_notizen'))).rows.length, 1)
-assert.equal((await als('authenticated', B, () => q('select id from public.lead_notizen'))).rows.length, 0)
+assert.equal((await als('authenticated', B, () => q('select id from public.lead_notizen'))).rows.length, 1, 'B liest die Notizen von A')
 await als('authenticated', B, () => fehler(q(`insert into public.lead_notizen (lead_id, user_id, text) values ($1,$2,'x')`, [l1.o_lead_id, B]), '42501'))
 // M3: Normalisierung "+490..." -> "+49..." (Wiederholung der Migration 20261103000200), Sperrliste: bei Konflikt bleibt der aeltere Eintrag
 await db.exec(`insert into public.leads (api_key_id, externe_id, name, telefon, email, gesellschaft, tarifbeitrag, eingang_zeit)
@@ -219,6 +238,7 @@ await db.exec(`insert into public.sperrliste (telefon, grund, gesperrt_am) value
   on conflict (telefon) do nothing`)
 await db.exec(readFileSync(dir + '20261103000200_qa_nachpruefung.sql', 'utf8'))
 await db.exec(readFileSync(dir + '20261103000200_qa_nachpruefung.sql', 'utf8')) // wiederholbar
+await db.exec(readFileSync(dir + '20261118000000_sichtbarkeit_alle_leads.sql', 'utf8')) // danach wieder die neuere Sichtbarkeit herstellen
 assert.equal((await q(`select telefon t from public.leads where externe_id='schlecht1'`)).rows[0].t, '+491511234500')
 assert.equal((await q(`select updated_at u from public.leads where externe_id='schlecht1'`)).rows[0].u.getTime(), updAlt.getTime(), 'updated_at bleibt unveraendert')
 const sl = Object.fromEntries((await q(`select telefon, grund from public.sperrliste where telefon ~ '^\\+49(1511111111|1522222222|1533333333)'`)).rows.map((r) => [r.telefon, r.grund]))

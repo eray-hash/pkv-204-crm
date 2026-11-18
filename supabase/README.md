@@ -181,3 +181,14 @@ Funktionen (neu buendeln und ersetzen): `leads` (Originalbody `payload_roh` enth
 
 - **Unklarer Ausgang bei sipgate:** Kommt auf die Anruf-Anfrage keine definitive Antwort (Zeitueberschreitung, Verbindungsabbruch), bleibt die reservierte Zeile stehen (`provider_call_id` leer), die Funktion antwortet 502 mit Code `anbieter_unklar` und neutraler Meldung, und das Frontend wechselt nicht automatisch auf die Telefon-App, sondern bietet die manuelle Wahl an. Definitive Fehlerantworten (4xx/5xx von sipgate) loeschen die Reservierung weiter.
 - **Eigene Rueckruf-/Anzeigenummer:** E.164 auch aus anderen Laendern erlaubt; deutsche Nummern durchlaufen die deutsche Allowlist; bekannte Premium-/Sonderpraefixe (nicht abschliessend: AT 0900/0901/0930/0931/0939, CH 0900/0901/0906, UK 09x/070, NANP 900, +979/+882/+883/+881/+870) sind gesperrt. Lead-Zielnummern bleiben deutsch-only.
+
+## Sichtbarkeit "Option A" (18.11.2026)
+
+Migration `migrations/20261118000000_sichtbarkeit_alle_leads.sql` (nach `20261103000200`, wiederholbar). Sie ersetzt die Einschraenkung aus der QA-Nachpruefung ("Mitarbeiter sehen nur freie und eigene Leads"):
+
+- **Alle sehen alle Leads.** `leads_select` zeigt jedem angemeldeten Nutzer alle Leads mit `ist_test = false`, der Geschaeftsfuehrer sieht zusaetzlich die Testleads. Gesperrte und geschlossene Leads sind sichtbar (mit Sperrvermerk), bleiben aber nicht uebernehmbar und nicht anrufbar. `lead_einwilligung` folgt derselben Regel. Realtime meldet damit auch Zuweisungen und Aenderungen an Leads von Kollegen an alle.
+- **Ein Lead eines Kollegen ist nur zum Ansehen.** Aendern (`leads_update`), Notizen schreiben (`notizen_insert`), Anrufe protokollieren (`anrufe_insert`), Uebernehmen/Umhaengen (`lead_uebernehmen(_fuer)`, `lead_zuweisen`), Freigeben und Anrufen (`darf_angerufen_werden`, `anruf_reservieren`) sind unveraendert streng: nur der Besitzer, bei Zuweisung/Freigabe auch der Geschaeftsfuehrer.
+- **Notizen und Anrufe zu Leads von Kollegen sind lesbar**, weil `notizen_select` und `anrufe_select` ueber die Leads-Policy laufen (kein Schreibrecht).
+- **Power Dialer:** Die Ansicht `anrufbare_leads` schliesst Leads von Kollegen jetzt selbst aus (freie und eigene Leads, auch fuer den Geschaeftsfuehrer), weil sie sonst mit der neuen Policy alle Leads zeigen wuerde.
+- **Frontend:** Tabs "Alle / Frei / Meine / Bei Kollegen", Besitzer in der Zeile ("Bei <Name>"), "Uebernehmen" nur bei freien, uebernehmbaren, nicht gesperrten Leads; im Lead-Detail sind Status, Notizen, Anrufen, Sperren und Freigeben bei Leads von Kollegen nicht sichtbar (Hinweis "Gehoert <Name>"). Dashboard und Leads-Uebersicht zeigen fuer alle die Zahlen des gesamten Teams.
+- Unveraendert: `consent_records` (direkt nur Geschaeftsfuehrer, ohne IP; alle anderen ueber `lead_einwilligung`), `passwort_log`, `sperrliste`, `webhook_test_eingang`.

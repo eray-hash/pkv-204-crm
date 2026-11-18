@@ -13,7 +13,7 @@ import {
   leadZugriff,
   anrufProtokollFehler,
   fuehreZusammen,
-  fuerMitarbeiterSichtbar,
+  besitzerAnzeige,
   GESCHUETZTE_STATUS,
   CLOSING_STATUS,
   upsertLead,
@@ -418,12 +418,31 @@ test('Geschuetzte Status und Sichtbarkeit stimmen mit der Migration ueberein', a
   assert.deepEqual([...CLOSING_STATUS, 'gewonnen'].sort(), [...GESCHUETZTE_STATUS].sort())
 })
 
-test('Sichtbarkeit fuer Mitarbeiter: freie Leads nur uebernehmbar, nicht gesperrt, kein Test; eigene immer', () => {
-  const frei = (over = {}) => lead({ zugewiesen_an: null, ...over })
-  assert.equal(fuerMitarbeiterSichtbar(frei(), 'me'), true)
-  for (const st of ['termin_vereinbart', 'beratung', 'kein_interesse', 'gewonnen'] as const) assert.equal(fuerMitarbeiterSichtbar(frei({ status: st }), 'me'), false, st)
-  assert.equal(fuerMitarbeiterSichtbar(frei({ gesperrt_am: '2026-11-03T10:00:00Z' }), 'me'), false)
-  assert.equal(fuerMitarbeiterSichtbar(frei({ ist_test: true }), 'me'), false)
-  assert.equal(fuerMitarbeiterSichtbar(lead({ zugewiesen_an: 'me', status: 'beratung' }), 'me'), true)
-  assert.equal(fuerMitarbeiterSichtbar(lead({ zugewiesen_an: 'andere' }), 'me'), false)
+test('Besitzer-Anzeige: Frei, Ich, Bei <Name>', () => {
+  const name = (id: string | null) => (id === 'kollege' ? 'Matthias' : 'Unbekannt')
+  assert.equal(besitzerAnzeige(lead({ zugewiesen_an: null }), 'me', name), 'Frei')
+  assert.equal(besitzerAnzeige(lead({ zugewiesen_an: 'me' }), 'me', name), 'Ich')
+  assert.equal(besitzerAnzeige(lead({ zugewiesen_an: 'kollege' }), 'me', name), 'Bei Matthias')
+})
+
+test('Filter "Bei Kollegen": nur Leads anderer, nicht freie und nicht eigene', () => {
+  const leads = [lead({ id: 'a', zugewiesen_an: null }), lead({ id: 'b', zugewiesen_an: ICH }), lead({ id: 'c', zugewiesen_an: ANDERER })]
+  assert.deepEqual(filterZuweisung(leads, 'kollegen', ICH).map((l) => l.id), ['c'])
+  assert.deepEqual(filterZuweisung(leads, 'kollegen', null).map((l) => l.id), ['b', 'c'])
+})
+
+test('Uebernehmen-Sichtbarkeit: nur freie, uebernehmbare, nicht gesperrte Leads; Leads von Kollegen sind nur zum Ansehen', () => {
+  const z = (over = {}, gf = false) => leadZugriff(lead({ zugewiesen_an: null, ...over }), ICH, gf)
+  assert.equal(z().darfUebernehmen, true)
+  assert.equal(z({ gesperrt_am: '2026-11-03T10:00:00Z' }).darfUebernehmen, false, 'gesperrt: sichtbar, aber nicht uebernehmbar')
+  for (const status of ['beratung', 'termin_vereinbart', 'gewonnen', 'kein_interesse'] as const) assert.equal(z({ status }).darfUebernehmen, false, status)
+  assert.equal(z({ ist_test: true }).darfUebernehmen, false)
+  const kollege = leadZugriff(lead({ zugewiesen_an: ANDERER }), ICH, false)
+  assert.deepEqual(
+    [kollege.bearbeiter, kollege.nurAnsehen, kollege.darfUebernehmen, kollege.darfBearbeiten, kollege.darfFreigeben, kollege.darfZuweisen],
+    ['andere', true, false, false, false, false],
+  )
+  const gf = leadZugriff(lead({ zugewiesen_an: ANDERER }), ICH, true)
+  assert.deepEqual([gf.nurAnsehen, gf.darfBearbeiten, gf.darfFreigeben, gf.darfZuweisen, gf.darfUebernehmen], [false, true, true, true, false])
+  assert.equal(leadZugriff(lead({ zugewiesen_an: ICH }), ICH, false).nurAnsehen, false)
 })

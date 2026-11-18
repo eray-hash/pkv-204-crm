@@ -197,20 +197,6 @@ export default function LeadDetail() {
       </div>
     )
   }
-  // Mitarbeiter sehen nur freie und eigene Leads: wurde der Lead inzwischen jemand anderem zugewiesen, verschwindet er aus der Liste
-  if (!istGF && leads.length > 0 && !ctxLead) {
-    return (
-      <div>
-        <Button variant="ghost" onClick={zurueck}>
-          <ArrowLeft size={16} /> Zurück
-        </Button>
-        <p className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800" role="status">
-          Dieser Lead wird inzwischen von jemand anderem bearbeitet und ist für Sie nicht mehr sichtbar.
-        </p>
-      </div>
-    )
-  }
-
   const z = zugriff as NonNullable<typeof zugriff>
   const besitzerName = nameVon(lead.zugewiesen_an)
   const pipelineIndex = PIPELINE_STATUS.indexOf(lead.status)
@@ -322,8 +308,9 @@ export default function LeadDetail() {
       )}
       {z.bearbeiter === 'andere' && (
         <p className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800" role="status">
-          Wird von {besitzerName} bearbeitet.{' '}
-          {istGF ? 'Als Geschäftsführer können Sie den Lead dennoch bearbeiten, freigeben oder neu zuweisen.' : 'Status, Notizen und Anrufe sind für Sie deaktiviert.'}
+          {istGF
+            ? `Gehört ${besitzerName}. Als Geschäftsführer können Sie den Lead dennoch bearbeiten, freigeben oder neu zuweisen.`
+            : `Gehört ${besitzerName}. Sie können diesen Lead ansehen (auch Notizen und Anrufe lesen). Ändern, anrufen oder übernehmen kann nur ${besitzerName} oder der Geschäftsführer.`}
         </p>
       )}
       {z.bearbeiter === 'frei' && !istGF && (
@@ -371,8 +358,9 @@ export default function LeadDetail() {
               )}
             </div>
             {z.bearbeiter === 'frei' && !z.darfUebernehmen && (
-              <p className="mt-2 text-xs text-ink-400">Dieser Lead kann wegen seines Status nicht übernommen werden. Der Geschäftsführer kann ihn zuweisen.</p>
+              <p className="mt-2 text-xs text-ink-400">Dieser Lead kann wegen seines Status oder einer Sperre nicht übernommen werden. Der Geschäftsführer kann ihn zuweisen.</p>
             )}
+            {!z.nurAnsehen && (
             <div className="mt-4 border-t border-ink-100 pt-3">
               {lead.gesperrt_am ? (
                 istGF && (
@@ -381,19 +369,12 @@ export default function LeadDetail() {
                   </Button>
                 )
               ) : (
-                <Button
-                  variant="danger"
-                  disabled={verteilungBusy || (z.bearbeiter === 'andere' && !istGF)}
-                  title={z.bearbeiter === 'andere' && !istGF ? 'Dieser Lead gehört jemand anderem: Nur der Besitzer oder der Geschäftsführer kann ihn sperren.' : undefined}
-                  onClick={() => setSperrDialog(true)}
-                >
+                <Button variant="danger" disabled={verteilungBusy} onClick={() => setSperrDialog(true)}>
                   <Ban size={15} /> Widerruf / nicht mehr anrufen
                 </Button>
               )}
-              {!lead.gesperrt_am && z.bearbeiter === 'andere' && !istGF && (
-                <p className="mt-1.5 text-xs text-ink-400">Nur der Besitzer oder der Geschäftsführer kann diesen Lead sperren.</p>
-              )}
             </div>
+            )}
             {z.darfZuweisen && (
               <div className="mt-4 border-t border-ink-100 pt-3">
                 <label className="mb-1 block text-xs font-medium text-ink-500" htmlFor="zuweisen-an">
@@ -429,6 +410,12 @@ export default function LeadDetail() {
         <div className="space-y-5 lg:col-span-2 lg:col-start-1 lg:row-span-2 lg:row-start-1">
           <Card className="p-5">
             <h2 className="mb-4 font-semibold text-ink-800">Status</h2>
+            {z.nurAnsehen ? (
+              <p className="text-sm text-ink-600">
+                Aktueller Status: <DbStatusBadge status={lead.status} />
+              </p>
+            ) : (
+              <>
             <div className="flex flex-wrap items-center gap-2">
               {PIPELINE_STATUS.map((status, i) => {
                 const aktuell = status === lead.status
@@ -473,6 +460,8 @@ export default function LeadDetail() {
                 Abschließen
               </Button>
             </div>
+              </>
+            )}
             {abgeschlossen && <p className="mt-2 text-xs text-ink-400">Dieser Lead ist abgeschlossen und wird nicht mehr angerufen.</p>}
             {statusGeschuetzt && !gesperrtBlockiert && (
               <p className="mt-2 text-xs text-ink-500">Der Status ist abgeschlossen. Nur der Geschäftsführer kann ihn wieder ändern.</p>
@@ -492,6 +481,8 @@ export default function LeadDetail() {
 
           <Card className="p-5">
             <h2 className="mb-3 font-semibold text-ink-800">Notizen</h2>
+            {!z.nurAnsehen && (
+              <>
             <textarea
               className={`${inputClass} min-h-[90px]`}
               value={notiz}
@@ -506,6 +497,8 @@ export default function LeadDetail() {
                 {speichertNotiz ? 'Speichern …' : 'Notiz speichern'}
               </Button>
             </div>
+              </>
+            )}
             <div className="mt-4 space-y-3">
               {zusatz.notizen.length === 0 && <p className="text-sm text-ink-400">Noch keine Notizen vorhanden.</p>}
               {zusatz.notizen.map((n) => (

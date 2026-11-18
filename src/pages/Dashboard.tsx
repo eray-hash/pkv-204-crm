@@ -41,7 +41,7 @@ export default function Dashboard() {
 
   return (
     <div>
-      <SectionHeader title="Dashboard" subtitle="Überblick über Leads und Ergebnisse der §204-Tarifoptimierung" />
+      <SectionHeader title="Dashboard" subtitle="Überblick über Leads und Ergebnisse des Teams (§204-Tarifoptimierung)" />
 
       <Card className="mb-5 p-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -105,7 +105,7 @@ export default function Dashboard() {
               <div className="mb-3 flex items-center gap-2">
                 <TrendingUp size={18} className="text-brand-500" />
                 <h2 className="font-semibold text-ink-800">Pipeline-Übersicht</h2>
-                <span className="text-xs text-ink-400">({profile?.rolle === 'geschaeftsfuehrer' ? 'alle Leads' : 'freie und eigene Leads'}, unabhängig vom Zeitraum)</span>
+                <span className="text-xs text-ink-400">(alle Leads des Teams, unabhängig vom Zeitraum)</span>
               </div>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                 {PIPELINE.map((status) => (

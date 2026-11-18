@@ -13,14 +13,14 @@ import {
   updateLeadRow,
   type VerteilungsErgebnis,
 } from '../lib/leadsApi'
-import { dialerReihenfolge, fuehreZusammen, fuerMitarbeiterSichtbar, mapLeadRow, queueFuerNutzer, upsertLead, type DbLead, type LeadPatch } from '../lib/leads'
+import { dialerReihenfolge, fuehreZusammen, mapLeadRow, queueFuerNutzer, upsertLead, type DbLead, type LeadPatch } from '../lib/leads'
 import { effektivOnline } from '../lib/praesenz'
 import { spieleBenachrichtigungston } from '../lib/ton'
 import { useToast } from '../components/ToastContext'
 import { useAuth } from './AuthContext'
 
 interface LeadsContextValue {
-  /** Alle echten Leads (ohne Testleads), neueste zuerst. Mitarbeiter sehen nur freie und eigene Leads, der Geschaeftsfuehrer alle. */
+  /** Alle echten Leads (ohne Testleads), neueste zuerst. Alle sehen alle Leads (nur zum Ansehen, wenn sie einem Kollegen gehoeren); Testleads sieht nur der Geschaeftsfuehrer. */
   leads: DbLead[]
   /** Anrufbare Leads (Ansicht anrufbare_leads) in Dialer-Reihenfolge: faellige Rueckrufe zuerst, dann neue nach Eingang */
   queue: DbLead[]
@@ -163,13 +163,7 @@ export function LeadsProvider({ children }: { children: ReactNode }) {
         const lead = mapLeadRow(payload.new)
         if (!lead || lead.ist_test) return
         const ich = profilRef.current
-        const istGF = ich?.rolle === 'geschaeftsfuehrer'
-        // Mitarbeiter sehen nur eigene und freie, uebernehmbare Leads (wie die Datenbank-Policy): sonst verschwindet der Lead aus der Sicht
-        if (!istGF && !fuerMitarbeiterSichtbar(lead, meRef.current)) {
-          setLeads((prev) => prev.filter((l) => l.id !== lead.id))
-          planeQueue()
-          return
-        }
+        // Alle sichtbaren Leads (auch die von Kollegen) werden uebernommen: Aenderungen und Zuweisungen kommen bei allen an
         lokalGeaendert.current.set(lead.id, Date.now())
         setLeads((prev) => upsertLead(prev, lead))
         // Hinweis (Toast und Ton) nur bei neuen, freien Live-Leads und wenn ich effektiv online bin

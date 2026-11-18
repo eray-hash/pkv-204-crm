@@ -1,11 +1,12 @@
 import { useState, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { formatDate, formatEuroExact } from '../lib/utils'
-import { filterZuweisung, statusLabel, statusTone, type DbLead, type ZuweisungsFilter } from '../lib/leads'
+import { besitzerAnzeige, filterZuweisung, leadZugriff, statusLabel, statusTone, type DbLead, type ZuweisungsFilter } from '../lib/leads'
+import { useToast } from './ToastContext'
 import { useAuth } from '../context/AuthContext'
 import { useTeam } from '../context/TeamContext'
 import { useLeads } from '../context/LeadsContext'
-import { Badge, ScrollHint } from './ui'
+import { Badge, Button, ScrollHint } from './ui'
 
 export function DbStatusBadge({ status }: { status: string }) {
   return <Badge tone={statusTone(status)}>{statusLabel(status)}</Badge>
@@ -23,10 +24,13 @@ export default function LeadTable({
   emptyText?: string
 }) {
   const navigate = useNavigate()
-  const { session } = useAuth()
+  const { session, profile } = useAuth()
+  const istGF = profile?.rolle === 'geschaeftsfuehrer'
+  const { showToast } = useToast()
   const { nameVon } = useTeam()
   // Das Duplikat-Kennzeichen nur zeigen, wenn der urspruengliche Lead fuer den Nutzer sichtbar ist (sonst fuehrt der Hinweis ins Leere)
-  const { leads: sichtbareLeads } = useLeads()
+  const { leads: sichtbareLeads, uebernehmen } = useLeads()
+  const [busyId, setBusyId] = useState<string | null>(null)
   const sichtbareIds = new Set(sichtbareLeads.map((l) => l.id))
   const meId = session?.user.id ?? null
   const [filter, setFilter] = useState<ZuweisungsFilter>('alle')
@@ -35,13 +39,22 @@ export default function LeadTable({
     return <div className="rounded-xl border border-dashed border-ink-200 bg-white p-8 text-center text-sm text-ink-400">{emptyText}</div>
   }
 
+  async function uebernimm(lead: DbLead) {
+    setBusyId(lead.id)
+    const res = await uebernehmen(lead.id)
+    setBusyId(null)
+    if (res.fehler) showToast(res.fehler, 'info')
+    else if (res.ok) showToast(`${lead.name} übernommen`)
+    else showToast('Dieser Lead wurde inzwischen von jemand anderem übernommen oder kann nicht übernommen werden.', 'info')
+  }
+
   const sichtbar = filterZuweisung(leads, filter, meId)
   const anzahl = (f: ZuweisungsFilter) => filterZuweisung(leads, f, meId).length
 
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center gap-1 rounded-xl bg-ink-100 p-1 sm:inline-flex" role="group" aria-label="Zuweisung filtern">
-        {(['alle', 'frei', 'meine'] as const).map((f) => (
+        {(['alle', 'frei', 'meine', 'kollegen'] as const).map((f) => (
           <button
             key={f}
             type="button"
@@ -49,10 +62,13 @@ export default function LeadTable({
             aria-pressed={filter === f}
             className={`rounded-lg px-3 py-1 text-sm font-medium transition-colors ${filter === f ? 'bg-white text-brand-700 shadow-sm' : 'text-ink-500 hover:text-ink-700'}`}
           >
-            {f === 'alle' ? 'Alle' : f === 'frei' ? 'Frei' : 'Meine'} <span className="text-xs text-ink-400">({anzahl(f)})</span>
+            {f === 'alle' ? 'Alle' : f === 'frei' ? 'Frei' : f === 'meine' ? 'Meine' : 'Bei Kollegen'} <span className="text-xs text-ink-400">({anzahl(f)})</span>
           </button>
         ))}
       </div>
+      {filter === 'kollegen' && (
+        <p className="mb-2 text-xs text-ink-500">Leads von Kollegen sind nur zum Ansehen. Übernehmen oder umhängen kann nur der Geschäftsführer.</p>
+      )}
       {filter === 'meine' && (
         <p className="mb-2 text-xs text-ink-500">Eigene Leads freigeben: Lead öffnen und „Freigeben“ wählen. Es sind höchstens 50 offene eigene Leads möglich.</p>
       )}
@@ -109,11 +125,19 @@ export default function LeadTable({
                 </td>
                 <td className="px-4 py-3">
                   {lead.zugewiesen_an ? (
-                    <span className={lead.zugewiesen_an === meId ? 'font-medium text-brand-700' : 'text-ink-600'}>
-                      {lead.zugewiesen_an === meId ? 'Ich' : nameVon(lead.zugewiesen_an)}
-                    </span>
+                    <span className={lead.zugewiesen_an === meId ? 'font-medium text-brand-700' : 'text-ink-600'}>{besitzerAnzeige(lead, meId, nameVon)}</span>
                   ) : (
-                    <Badge tone="green">Frei</Badge>
+                    <span className="flex flex-wrap items-center gap-2">
+                      <Badge tone="green">Frei</Badge>
+                      {leadZugriff(lead, meId, istGF).darfUebernehmen && (
+                        // Klick auf den Knopf darf nicht die Zeile (Navigation zum Lead) ausloesen
+                        <span onClick={(e) => e.stopPropagation()}>
+                          <Button variant="secondary" className="px-2.5 py-1 text-xs" disabled={busyId === lead.id} onClick={() => void uebernimm(lead)}>
+                            Übernehmen
+                          </Button>
+                        </span>
+                      )}
+                    </span>
                   )}
                 </td>
                 <td className="px-4 py-3 text-ink-500">{formatDate(lead.eingang_zeit)}</td>

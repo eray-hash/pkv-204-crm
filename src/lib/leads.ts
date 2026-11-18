@@ -278,44 +278,47 @@ export type Bearbeiter = 'frei' | 'ich' | 'andere'
 
 export interface LeadZugriff {
   bearbeiter: Bearbeiter
-  /** frei zum Uebernehmen (Status passt, kein Testlead) */
+  /** frei zum Uebernehmen (Status passt, nicht gesperrt, kein Testlead) */
   darfUebernehmen: boolean
   /** eigener Lead oder Geschaeftsfuehrer */
   darfFreigeben: boolean
   darfZuweisen: boolean
   /** Status aendern, Notizen schreiben, anrufen: nicht, wenn der Lead einem anderen gehoert (Geschaeftsfuehrer ausgenommen) */
   darfBearbeiten: boolean
+  /** Lead eines Kollegen: nur zum Ansehen (Notizen und Anrufe lesen), alles andere ist dem Besitzer und dem Geschaeftsfuehrer vorbehalten */
+  nurAnsehen: boolean
   /** Ein Mitarbeiter muss einen freien Lead zuerst uebernehmen, bevor er den Status aendern kann (Datenbankregel) */
   uebernahmeVorBearbeitung: boolean
 }
 
-export function leadZugriff(lead: Pick<DbLead, 'zugewiesen_an' | 'status' | 'ist_test'>, meId: string | null, istGeschaeftsfuehrer: boolean): LeadZugriff {
+export function leadZugriff(lead: Pick<DbLead, 'zugewiesen_an' | 'status' | 'ist_test' | 'gesperrt_am'>, meId: string | null, istGeschaeftsfuehrer: boolean): LeadZugriff {
   const bearbeiter: Bearbeiter = lead.zugewiesen_an === null ? 'frei' : lead.zugewiesen_an === meId ? 'ich' : 'andere'
   return {
     bearbeiter,
-    darfUebernehmen: bearbeiter === 'frei' && !lead.ist_test && UEBERNAHME_STATUS.includes(lead.status),
+    darfUebernehmen: bearbeiter === 'frei' && !lead.ist_test && !lead.gesperrt_am && UEBERNAHME_STATUS.includes(lead.status),
     darfFreigeben: bearbeiter !== 'frei' && (bearbeiter === 'ich' || istGeschaeftsfuehrer),
     darfZuweisen: istGeschaeftsfuehrer,
     darfBearbeiten: bearbeiter !== 'andere' || istGeschaeftsfuehrer,
+    nurAnsehen: bearbeiter === 'andere' && !istGeschaeftsfuehrer,
     uebernahmeVorBearbeitung: bearbeiter === 'frei' && !istGeschaeftsfuehrer,
   }
 }
 
-/**
- * Sieht ein Mitarbeiter diesen Lead (wie die Zeilen-Policy leads_select)? Freie Leads nur in uebernehmbarem Status, nicht gesperrt und kein
- * Testlead; eigene Leads immer. Der Geschaeftsfuehrer sieht alles.
- */
-export function fuerMitarbeiterSichtbar(lead: Pick<DbLead, 'zugewiesen_an' | 'status' | 'gesperrt_am' | 'ist_test'>, meId: string | null): boolean {
-  if (lead.zugewiesen_an !== null) return lead.zugewiesen_an === meId
-  return !lead.ist_test && !lead.gesperrt_am && UEBERNAHME_STATUS.includes(lead.status)
-}
-
-export type ZuweisungsFilter = 'alle' | 'frei' | 'meine'
+export type ZuweisungsFilter = 'alle' | 'frei' | 'meine' | 'kollegen'
 
 export function filterZuweisung(leads: DbLead[], filter: ZuweisungsFilter, meId: string | null): DbLead[] {
   if (filter === 'frei') return leads.filter((l) => l.zugewiesen_an === null)
   if (filter === 'meine') return leads.filter((l) => meId !== null && l.zugewiesen_an === meId)
+  // "Bei Kollegen": gehoert jemand anderem (nur zum Ansehen; uebernehmen/umhaengen kann nur der Geschaeftsfuehrer)
+  if (filter === 'kollegen') return leads.filter((l) => l.zugewiesen_an !== null && l.zugewiesen_an !== meId)
   return leads
+}
+
+/** Anzeige des Besitzers in Listen: "Frei", "Ich" oder "Bei <Name>". */
+export function besitzerAnzeige(lead: Pick<DbLead, 'zugewiesen_an'>, meId: string | null, nameVon: (id: string | null) => string): string {
+  if (lead.zugewiesen_an === null) return 'Frei'
+  if (lead.zugewiesen_an === meId) return 'Ich'
+  return `Bei ${nameVon(lead.zugewiesen_an)}`
 }
 
 /** Warteschlange des Power Dialers: freie Leads plus eigene, Leads anderer Personen werden nie angezeigt. */
